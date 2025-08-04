@@ -12,7 +12,11 @@ target_link_libraries(DxbcConverter PUBLIC
   ShaderBinary
 )
 
-add_dependencies(DxbcConverter intrinsics_gen DxcRuntimeEtw DxilConvPasses)
+if (WIN32)
+  add_dependencies(DxbcConverter intrinsics_gen DxcRuntimeEtw DxilConvPasses)
+else()
+  add_dependencies(DxbcConverter intrinsics_gen DxilConvPasses)
+endif()
 
 target_include_directories(DxbcConverter
 PUBLIC
