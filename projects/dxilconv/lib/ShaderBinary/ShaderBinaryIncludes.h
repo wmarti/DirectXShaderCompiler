@@ -10,8 +10,8 @@
 #pragma once
 // clang-format off
 // Includes on Windows are highly order dependent.
-#include "windows.h"
-
+#include "external/win_shim/com_fake.h"
+#define COM_NO_WINDOWS_H
 #include <assert.h>
 #include <float.h>
 #include <strsafe.h>

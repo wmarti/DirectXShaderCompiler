@@ -20,20 +20,15 @@
 #define NOMINMAX 1
 #define WIN32_LEAN_AND_MEAN 1
 #define VC_EXTRALEAN 1
-#include <windows.h>
-#include <strsafe.h>
+#include "external/win_shim/com_fake.h"
+#define COM_NO_WINDOWS_H
 
-#include <dxgitype.h>
-#include <d3dcommon.h>
-#include <d3d11.h>
 #include <d3d12.h>
 #include "dxc/Support/d3dx12.h"
 #include "DxbcSignatures.h"
-#include <d3dcompiler.h>
-#include <wincrypt.h>
 
 #ifndef DECODE_D3D10_SB_TOKENIZED_PROGRAM_TYPE
-#include "dxc\Support\d3d12TokenizedProgramFormat.hpp"
+#include "dxc/Support/d3d12TokenizedProgramFormat.hpp"
 #endif
 
 #include "ShaderBinary/ShaderBinary.h"
