@@ -366,6 +366,7 @@ MDString *MDString::get(LLVMContext &Context, StringRef Str) {
   auto *Entry =
       StringMapEntry<MDString>::Create(Str, Store.getAllocator(), MDString());
   // HLSL Change Begin: Don't leak on insertion failure
+#ifdef __EXCEPTIONS
   try {
   bool WasInserted = Store.insert(Entry);
   (void)WasInserted;
@@ -375,6 +376,11 @@ MDString *MDString::get(LLVMContext &Context, StringRef Str) {
     Entry->Destroy();
     throw;
   }
+#else
+  bool WasInserted = Store.insert(Entry);
+  (void)WasInserted;
+  assert(WasInserted && "Expected entry to be inserted");
+#endif
   // HLSL Change End
   Entry->second.Entry = Entry;
   return &Entry->second;
@@ -721,12 +727,16 @@ MDTuple *MDTuple::getImpl(LLVMContext &Context, ArrayRef<Metadata *> MDs,
   // HLSL Change - guard with try/catch
   MDTuple *MDTuplePtr(new (MDs.size()) MDTuple(Context, Storage, Hash, MDs));
   MDTuple *Result;
+#ifdef __EXCEPTIONS
   try {
     Result = storeImpl(MDTuplePtr, Storage, Context.pImpl->MDTuples);
   } catch (...) {
     MDTuplePtr->deleteAsSubclass();
     throw;
   }
+#else
+  Result = storeImpl(MDTuplePtr, Storage, Context.pImpl->MDTuples);
+#endif
   return Result;
 }
 

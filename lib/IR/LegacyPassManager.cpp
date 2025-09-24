@@ -1398,7 +1398,11 @@ FunctionPassManager::FunctionPassManager(Module *m) : M(m) {
   AnalysisResolver *AR = new (std::nothrow)AnalysisResolver(*FPM); // HLSL Change: nothrow and recover
   if (!AR) {
     delete FPM;
+#ifdef __EXCEPTIONS
     throw std::bad_alloc();
+#else
+    abort();
+#endif
   }
   FPM->setResolver(AR);
 }

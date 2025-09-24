@@ -11,6 +11,10 @@
 
 #pragma once
 
+// Include basic Windows types
+#include "Support/windows.h"
+#include "Support/d3dcommon_minimal.h"
+
 typedef D3D_NAME D3D10_NAME;
 typedef D3D_REGISTER_COMPONENT_TYPE D3D10_REGISTER_COMPONENT_TYPE;
 

@@ -22,6 +22,33 @@
 namespace D3D10ShaderBinary
 {
 
+// ARM64-safe token reading helpers
+inline CShaderToken ReadTokenSafe(const CShaderToken* ptr) {
+#if ARM64_ALIGNMENT_REQUIRED
+    return ReadUnalignedUINT(ptr);
+#else
+    return *ptr;
+#endif
+}
+
+inline CShaderToken* AdvanceTokenPointer(CShaderToken* ptr, UINT offset = 1) {
+    // Ensure 4-byte alignment when advancing
+    CShaderToken* result = ptr + offset;
+#if ARM64_ALIGNMENT_REQUIRED
+    result = static_cast<CShaderToken*>(AlignTokenPointer(result));
+#endif
+    return result;
+}
+
+inline const CShaderToken* AdvanceTokenPointer(const CShaderToken* ptr, UINT offset = 1) {
+    // Ensure 4-byte alignment when advancing
+    const CShaderToken* result = ptr + offset;
+#if ARM64_ALIGNMENT_REQUIRED
+    result = static_cast<const CShaderToken*>(AlignTokenPointer(result));
+#endif
+    return result;
+}
+
 BOOL IsOpCodeValid(D3D10_SB_OPCODE_TYPE OpCode)
 {
     return OpCode < D3D10_SB_NUM_OPCODES;
@@ -298,14 +325,14 @@ void InitInstructionInfo()
 void CShaderCodeParser::SetShader(CONST CShaderToken* pBuffer)
 {
     m_pShaderCode = (CShaderToken*)pBuffer;
-    m_pShaderEndToken = (CShaderToken*)pBuffer + pBuffer[1];
-    // First OpCode token
-    m_pCurrentToken = (CShaderToken*)&pBuffer[2];
+    m_pShaderEndToken = (CShaderToken*)pBuffer + ReadTokenSafe(&pBuffer[1]);
+    // First OpCode token - ensure alignment
+    m_pCurrentToken = AdvanceTokenPointer((CShaderToken*)pBuffer, 2);
 }
 
 D3D10_SB_TOKENIZED_PROGRAM_TYPE CShaderCodeParser::ShaderType()
 {
-    return (D3D10_SB_TOKENIZED_PROGRAM_TYPE)DECODE_D3D10_SB_TOKENIZED_PROGRAM_TYPE(*m_pShaderCode);
+    return (D3D10_SB_TOKENIZED_PROGRAM_TYPE)DECODE_D3D10_SB_TOKENIZED_PROGRAM_TYPE(ReadTokenSafe(m_pShaderCode));
 }
 
 UINT CShaderCodeParser::CurrentTokenOffset()
@@ -315,22 +342,22 @@ UINT CShaderCodeParser::CurrentTokenOffset()
 
 void CShaderCodeParser::SetCurrentTokenOffset(UINT Offset)
 {
-    m_pCurrentToken = m_pShaderCode + Offset;
+    m_pCurrentToken = AdvanceTokenPointer(m_pShaderCode, Offset);
 }
 
 UINT CShaderCodeParser::ShaderLengthInTokens()
 {
-    return m_pShaderCode[1];
+    return ReadTokenSafe(&m_pShaderCode[1]);
 }
 
 UINT CShaderCodeParser::ShaderMinorVersion()
 {
-    return DECODE_D3D10_SB_TOKENIZED_PROGRAM_MINOR_VERSION(m_pShaderCode[0]);
+    return DECODE_D3D10_SB_TOKENIZED_PROGRAM_MINOR_VERSION(ReadTokenSafe(&m_pShaderCode[0]));
 }
 
 UINT CShaderCodeParser::ShaderMajorVersion()
 {
-    return DECODE_D3D10_SB_TOKENIZED_PROGRAM_MAJOR_VERSION(m_pShaderCode[0]);
+    return DECODE_D3D10_SB_TOKENIZED_PROGRAM_MAJOR_VERSION(ReadTokenSafe(&m_pShaderCode[0]));
 }
 
 void CShaderCodeParser::ParseIndex(COperandIndex* pOperandIndex, D3D10_SB_OPERAND_INDEX_REPRESENTATION IndexType)
@@ -338,13 +365,16 @@ void CShaderCodeParser::ParseIndex(COperandIndex* pOperandIndex, D3D10_SB_OPERAN
     switch (IndexType)
     {
     case D3D10_SB_OPERAND_INDEX_IMMEDIATE32:
-        pOperandIndex->m_RegIndex = *m_pCurrentToken++;
+        pOperandIndex->m_RegIndex = ReadTokenSafe(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         pOperandIndex->m_ComponentName = D3D10_SB_4_COMPONENT_X;
         pOperandIndex->m_RelRegType = D3D10_SB_OPERAND_TYPE_IMMEDIATE32;
         break;
     case D3D10_SB_OPERAND_INDEX_IMMEDIATE64:
-        pOperandIndex->m_RegIndexA[0] = *m_pCurrentToken++;
-        pOperandIndex->m_RegIndexA[1] = *m_pCurrentToken++;
+        pOperandIndex->m_RegIndexA[0] = ReadTokenSafe(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pOperandIndex->m_RegIndexA[1] = ReadTokenSafe(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         pOperandIndex->m_ComponentName = D3D10_SB_4_COMPONENT_X;
         pOperandIndex->m_RelRegType = D3D10_SB_OPERAND_TYPE_IMMEDIATE64;
         break;
@@ -362,7 +392,8 @@ void CShaderCodeParser::ParseIndex(COperandIndex* pOperandIndex, D3D10_SB_OPERAN
         }
     case D3D10_SB_OPERAND_INDEX_IMMEDIATE32_PLUS_RELATIVE:
         {
-            pOperandIndex->m_RegIndex = *m_pCurrentToken++;
+            pOperandIndex->m_RegIndex = ReadTokenSafe(m_pCurrentToken);
+            m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
             COperand operand;
             ParseOperand(&operand);
             pOperandIndex->m_RelIndex = operand.m_Index[0].m_RegIndex;
@@ -380,7 +411,8 @@ void CShaderCodeParser::ParseIndex(COperandIndex* pOperandIndex, D3D10_SB_OPERAN
 
 void CShaderCodeParser::ParseOperand(COperandBase* pOperand)
 {
-    CShaderToken Token = *m_pCurrentToken++;
+    CShaderToken Token = ReadTokenSafe(m_pCurrentToken);
+    m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
 
     pOperand->m_Type = DECODE_D3D10_SB_OPERAND_TYPE(Token);
     pOperand->m_NumComponents = DECODE_D3D10_SB_OPERAND_NUM_COMPONENTS(Token);
@@ -446,7 +478,8 @@ void CShaderCodeParser::ParseOperand(COperandBase* pOperand)
     // Extended operand
     if (pOperand->m_bExtendedOperand)
     {
-        Token = *m_pCurrentToken++;
+        Token = ReadTokenSafe(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         pOperand->m_ExtendedOperandType = DECODE_D3D10_SB_EXTENDED_OPERAND_TYPE(Token);
         if (pOperand->m_ExtendedOperandType == D3D10_SB_EXTENDED_OPERAND_MODIFIER)
         {
@@ -462,7 +495,8 @@ void CShaderCodeParser::ParseOperand(COperandBase* pOperand)
     case D3D10_SB_OPERAND_TYPE_IMMEDIATE64:
         for (UINT i=0 ; i < NumComponents; i++)
         {
-            pOperand->m_Value[i] = *m_pCurrentToken++;
+            pOperand->m_Value[i] = ReadTokenSafe(m_pCurrentToken);
+            m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
     }
@@ -483,7 +517,8 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
 {
     pInstruction->Clear(true);
     CShaderToken* pStart = m_pCurrentToken;
-    CShaderToken Token = *m_pCurrentToken++;
+    CShaderToken Token = ReadTokenSafe(m_pCurrentToken);
+    m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
     pInstruction->m_OpCode = DECODE_D3D10_SB_OPCODE_TYPE(Token);
     pInstruction->m_PreciseMask = DECODE_D3D11_SB_INSTRUCTION_PRECISE_VALUES(Token); 
     pInstruction->m_bSaturate = DECODE_IS_D3D10_SB_INSTRUCTION_SATURATE_ENABLED(Token); 
@@ -497,7 +532,8 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
     {
         pInstruction->m_ExtendedOpCodeCount = 1;
     #pragma prefast (suppress : __WARNING_LOCALDECLHIDESLOCAL, "This uses the same variable name for continuity.")
-        CShaderToken Token = *m_pCurrentToken++;
+        CShaderToken Token = ReadTokenSafe(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         // these instructions may be longer than can fit in the normal instructionlength field
         InstructionLength = (UINT)(Token);
     }
@@ -508,7 +544,8 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         {   
             pInstruction->m_ExtendedOpCodeCount++;
     #pragma prefast (suppress : __WARNING_LOCALDECLHIDESLOCAL, "This uses the same variable name for continuity.")
-            CShaderToken Token = *m_pCurrentToken++;
+            CShaderToken Token = ReadTokenSafe(m_pCurrentToken);
+            m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
             bExtended = DECODE_IS_D3D10_SB_OPCODE_EXTENDED(Token);
             pInstruction->m_OpCodeEx[i] = DECODE_D3D10_SB_EXTENDED_OPCODE_TYPE(Token);
             switch(pInstruction->m_OpCodeEx[i])
@@ -556,8 +593,8 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
 
         // not bothering to keep custom-data for now. TODO: store
         pInstruction->m_CustomData.Type = DECODE_D3D10_SB_CUSTOMDATA_CLASS(Token);
-        InstructionLength = *m_pCurrentToken;
-        if (*m_pCurrentToken <2)
+        InstructionLength = ReadTokenSafe(m_pCurrentToken);
+        if (ReadTokenSafe(m_pCurrentToken) <2)
         {
             InstructionLength = 2;
             pInstruction->m_CustomData.pData = 0;
@@ -565,13 +602,13 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         }
         else
         {
-            pInstruction->m_CustomData.DataSizeInBytes = (*m_pCurrentToken-2)*4;
-            pInstruction->m_CustomData.pData = malloc((*m_pCurrentToken - 2)*sizeof(UINT));
+            pInstruction->m_CustomData.DataSizeInBytes = (ReadTokenSafe(m_pCurrentToken)-2)*4;
+            pInstruction->m_CustomData.pData = malloc((ReadTokenSafe(m_pCurrentToken) - 2)*sizeof(UINT));
             if( NULL == pInstruction->m_CustomData.pData )
             {
                 throw E_OUTOFMEMORY;
             }
-            memcpy(pInstruction->m_CustomData.pData, m_pCurrentToken+1, (*m_pCurrentToken - 2)*4);
+            memcpy(pInstruction->m_CustomData.pData, m_pCurrentToken+1, (ReadTokenSafe(m_pCurrentToken) - 2)*4);
 
             switch(pInstruction->m_CustomData.Type)
             {
@@ -649,13 +686,13 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         }      
         break;
     case D3D11_SB_OPCODE_DCL_FUNCTION_BODY:
-        pInstruction->m_FunctionBodyDecl.FunctionBodyNumber = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_FunctionBodyDecl.FunctionBodyNumber = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
     case D3D11_SB_OPCODE_DCL_FUNCTION_TABLE:
-        pInstruction->m_FunctionTableDecl.FunctionTableNumber = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
-        pInstruction->m_FunctionTableDecl.TableLength = (UINT)(*m_pCurrentToken);
+        pInstruction->m_FunctionTableDecl.FunctionTableNumber = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_FunctionTableDecl.TableLength = (UINT)(ReadTokenSafe(m_pCurrentToken));
 
         // opcode
         // instruction length if extended instruction
@@ -672,21 +709,21 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
             throw E_OUTOFMEMORY;
         }
 
-        m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
 
         memcpy(pInstruction->m_FunctionTableDecl.pFunctionIdentifiers, m_pCurrentToken,
                pInstruction->m_FunctionTableDecl.TableLength*sizeof(UINT));
         break;
     case D3D11_SB_OPCODE_DCL_INTERFACE:
         pInstruction->m_InterfaceDecl.bDynamicallyIndexed = DECODE_D3D11_SB_INTERFACE_INDEXED_BIT(Token);
-        pInstruction->m_InterfaceDecl.InterfaceNumber = (WORD)(*m_pCurrentToken);
-        m_pCurrentToken++;
-        pInstruction->m_InterfaceDecl.ExpectedTableSize = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_InterfaceDecl.InterfaceNumber = (WORD)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_InterfaceDecl.ExpectedTableSize = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         // there's a limit of 64k types, so that gives a max length on this table.
-        pInstruction->m_InterfaceDecl.TableLength = DECODE_D3D11_SB_INTERFACE_TABLE_LENGTH(*m_pCurrentToken);
+        pInstruction->m_InterfaceDecl.TableLength = DECODE_D3D11_SB_INTERFACE_TABLE_LENGTH(ReadTokenSafe(m_pCurrentToken));
         // this puts a limit on the size of interface arrays at 64k
-        pInstruction->m_InterfaceDecl.ArrayLength = DECODE_D3D11_SB_INTERFACE_ARRAY_LENGTH(*m_pCurrentToken);
+        pInstruction->m_InterfaceDecl.ArrayLength = DECODE_D3D11_SB_INTERFACE_ARRAY_LENGTH(ReadTokenSafe(m_pCurrentToken));
 
         // opcode
         // instruction length if extended instruction
@@ -704,13 +741,14 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
             throw E_OUTOFMEMORY;
         }
 
-        m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
 
         memcpy(pInstruction->m_InterfaceDecl.pFunctionTableIdentifiers, m_pCurrentToken,
                pInstruction->m_InterfaceDecl.TableLength*sizeof(UINT));
         break;
     case D3D11_SB_OPCODE_INTERFACE_CALL:
-        pInstruction->m_InterfaceCall.FunctionIndex = *m_pCurrentToken++;
+        pInstruction->m_InterfaceCall.FunctionIndex = ReadTokenSafe(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         pInstruction->m_InterfaceCall.pInterfaceOperand =
             pInstruction->m_Operands;
         ParseOperand(pInstruction->m_InterfaceCall.pInterfaceOperand);
@@ -718,16 +756,16 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
     case D3D10_SB_OPCODE_DCL_RESOURCE:
         pInstruction->m_ResourceDecl.Dimension = DECODE_D3D10_SB_RESOURCE_DIMENSION(Token);
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_ResourceDecl.ReturnType[0] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 0);
-        pInstruction->m_ResourceDecl.ReturnType[1] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 1);
-        pInstruction->m_ResourceDecl.ReturnType[2] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 2);
-        pInstruction->m_ResourceDecl.ReturnType[3] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 3);
+        pInstruction->m_ResourceDecl.ReturnType[0] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 0);
+        pInstruction->m_ResourceDecl.ReturnType[1] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 1);
+        pInstruction->m_ResourceDecl.ReturnType[2] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 2);
+        pInstruction->m_ResourceDecl.ReturnType[3] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 3);
         pInstruction->m_ResourceDecl.SampleCount = DECODE_D3D10_SB_RESOURCE_SAMPLE_COUNT(Token);
-        m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         pInstruction->m_ResourceDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_ResourceDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_ResourceDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
 
@@ -737,7 +775,7 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         pInstruction->m_SamplerDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_SamplerDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_SamplerDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
 
@@ -746,16 +784,16 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         break;
 
     case D3D10_SB_OPCODE_DCL_TEMPS:
-        pInstruction->m_TempsDecl.NumTemps = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_TempsDecl.NumTemps = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_INDEXABLE_TEMP:
-        pInstruction->m_IndexableTempDecl.IndexableTempNumber = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
-        pInstruction->m_IndexableTempDecl.NumRegisters  = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
-        switch( min( 4u, max( 1u, (UINT)(*m_pCurrentToken) ) ) )
+        pInstruction->m_IndexableTempDecl.IndexableTempNumber = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_IndexableTempDecl.NumRegisters  = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        switch( min( 4u, max( 1u, (UINT)(ReadTokenSafe(m_pCurrentToken)) ) ) )
         {
         case 1:
             pInstruction->m_IndexableTempDecl.Mask = D3D10_SB_OPERAND_4_COMPONENT_MASK_X;
@@ -773,7 +811,7 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
             pInstruction->m_IndexableTempDecl.Mask = D3D10_SB_OPERAND_4_COMPONENT_MASK_ALL;
             break;
         }
-        m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_INPUT:
@@ -783,14 +821,14 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
 
     case D3D10_SB_OPCODE_DCL_INPUT_SIV:
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_InputDeclSIV.Name = DECODE_D3D10_SB_NAME(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_InputDeclSIV.Name = DECODE_D3D10_SB_NAME(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_INPUT_SGV:
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_InputDeclSIV.Name = DECODE_D3D10_SB_NAME(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_InputDeclSIV.Name = DECODE_D3D10_SB_NAME(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_INPUT_PS:
@@ -801,33 +839,33 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
     case D3D10_SB_OPCODE_DCL_INPUT_PS_SIV:
         pInstruction->m_InputPSDeclSIV.InterpolationMode = DECODE_D3D10_SB_INPUT_INTERPOLATION_MODE(Token);
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_InputPSDeclSIV.Name = DECODE_D3D10_SB_NAME(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_InputPSDeclSIV.Name = DECODE_D3D10_SB_NAME(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_INPUT_PS_SGV:
         pInstruction->m_InputPSDeclSGV.InterpolationMode = DECODE_D3D10_SB_INPUT_INTERPOLATION_MODE(Token);
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_InputPSDeclSGV.Name = DECODE_D3D10_SB_NAME(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_InputPSDeclSGV.Name = DECODE_D3D10_SB_NAME(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_OUTPUT_SIV:
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_OutputDeclSIV.Name = DECODE_D3D10_SB_NAME(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_OutputDeclSIV.Name = DECODE_D3D10_SB_NAME(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_OUTPUT_SGV:
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_OutputDeclSGV.Name = DECODE_D3D10_SB_NAME(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_OutputDeclSGV.Name = DECODE_D3D10_SB_NAME(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_INDEX_RANGE:
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_IndexRangeDecl.RegCount = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_IndexRangeDecl.RegCount = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_CONSTANT_BUFFER:
@@ -836,8 +874,8 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         pInstruction->m_ConstantBufferDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_ConstantBufferDecl.Size = (UINT)(*m_pCurrentToken++);
-            pInstruction->m_ConstantBufferDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_ConstantBufferDecl.Size = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+            pInstruction->m_ConstantBufferDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         else
         {
@@ -854,13 +892,13 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         break;
 
     case D3D10_SB_OPCODE_DCL_MAX_OUTPUT_VERTEX_COUNT:
-        pInstruction->m_GSMaxOutputVertexCountDecl.MaxOutputVertexCount = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_GSMaxOutputVertexCountDecl.MaxOutputVertexCount = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D11_SB_OPCODE_DCL_GS_INSTANCE_COUNT:
-        pInstruction->m_GSInstanceCountDecl.InstanceCount = (UINT)(*m_pCurrentToken);
-        m_pCurrentToken++;
+        pInstruction->m_GSInstanceCountDecl.InstanceCount = (UINT)(ReadTokenSafe(m_pCurrentToken));
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D10_SB_OPCODE_DCL_GLOBAL_FLAGS:
@@ -889,35 +927,38 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
 
     case D3D11_SB_OPCODE_DCL_HS_MAX_TESSFACTOR:
         pInstruction->m_HSMaxTessFactorDecl.MaxTessFactor = *(float*)m_pCurrentToken;
-        m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
 
     case D3D11_SB_OPCODE_DCL_HS_FORK_PHASE_INSTANCE_COUNT:
         pInstruction->m_HSForkPhaseInstanceCountDecl.InstanceCount = *(UINT*)m_pCurrentToken;
-        m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
     case D3D11_SB_OPCODE_DCL_HS_JOIN_PHASE_INSTANCE_COUNT:
         pInstruction->m_HSJoinPhaseInstanceCountDecl.InstanceCount = *(UINT*)m_pCurrentToken;
-        m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         break;
     case D3D11_SB_OPCODE_DCL_THREAD_GROUP:
-        pInstruction->m_ThreadGroupDecl.x = *(UINT*)m_pCurrentToken++;
-        pInstruction->m_ThreadGroupDecl.y = *(UINT*)m_pCurrentToken++;
-        pInstruction->m_ThreadGroupDecl.z = *(UINT*)m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_ThreadGroupDecl.x = ReadUnalignedUINT(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_ThreadGroupDecl.y = ReadUnalignedUINT(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_ThreadGroupDecl.z = ReadUnalignedUINT(m_pCurrentToken);
         break;
     case D3D11_SB_OPCODE_DCL_UNORDERED_ACCESS_VIEW_TYPED:
         pInstruction->m_TypedUAVDecl.Dimension = DECODE_D3D10_SB_RESOURCE_DIMENSION(Token);
         pInstruction->m_TypedUAVDecl.Flags = DECODE_D3D11_SB_RESOURCE_FLAGS(Token);
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_TypedUAVDecl.ReturnType[0] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 0);
-        pInstruction->m_TypedUAVDecl.ReturnType[1] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 1);
-        pInstruction->m_TypedUAVDecl.ReturnType[2] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 2);
-        pInstruction->m_TypedUAVDecl.ReturnType[3] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(*m_pCurrentToken, 3);
-        m_pCurrentToken++;
+        pInstruction->m_TypedUAVDecl.ReturnType[0] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 0);
+        pInstruction->m_TypedUAVDecl.ReturnType[1] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 1);
+        pInstruction->m_TypedUAVDecl.ReturnType[2] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 2);
+        pInstruction->m_TypedUAVDecl.ReturnType[3] = DECODE_D3D10_SB_RESOURCE_RETURN_TYPE(ReadTokenSafe(m_pCurrentToken), 3);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         pInstruction->m_TypedUAVDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_TypedUAVDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_TypedUAVDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
     case D3D11_SB_OPCODE_DCL_UNORDERED_ACCESS_VIEW_RAW:
@@ -926,43 +967,48 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
         pInstruction->m_RawUAVDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_RawUAVDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_RawUAVDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
     case D3D11_SB_OPCODE_DCL_UNORDERED_ACCESS_VIEW_STRUCTURED:
         pInstruction->m_StructuredUAVDecl.Flags = DECODE_D3D11_SB_RESOURCE_FLAGS(Token);
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_StructuredUAVDecl.ByteStride = *(UINT*)m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_StructuredUAVDecl.ByteStride = ReadUnalignedUINT(m_pCurrentToken);
         pInstruction->m_StructuredUAVDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_StructuredUAVDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_StructuredUAVDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
     case D3D11_SB_OPCODE_DCL_THREAD_GROUP_SHARED_MEMORY_RAW:
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_RawTGSMDecl.ByteCount = *(UINT*)m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_RawTGSMDecl.ByteCount = ReadUnalignedUINT(m_pCurrentToken);
         break;
     case D3D11_SB_OPCODE_DCL_THREAD_GROUP_SHARED_MEMORY_STRUCTURED:
         ParseOperand(&pInstruction->m_Operands[0]);
-        pInstruction->m_StructuredTGSMDecl.StructByteStride = *(UINT*)m_pCurrentToken++;
-        pInstruction->m_StructuredTGSMDecl.StructCount = *(UINT*)m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_StructuredTGSMDecl.StructByteStride = ReadUnalignedUINT(m_pCurrentToken);
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_StructuredTGSMDecl.StructCount = ReadUnalignedUINT(m_pCurrentToken);
         break;
     case D3D11_SB_OPCODE_DCL_RESOURCE_RAW:
         ParseOperand(&pInstruction->m_Operands[0]);       
         pInstruction->m_RawSRVDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_RawSRVDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_RawSRVDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
     case D3D11_SB_OPCODE_DCL_RESOURCE_STRUCTURED:
         ParseOperand(&pInstruction->m_Operands[0]);       
-        pInstruction->m_StructuredSRVDecl.ByteStride = *(UINT*)m_pCurrentToken++;
+        m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
+        pInstruction->m_StructuredSRVDecl.ByteStride = ReadUnalignedUINT(m_pCurrentToken);
         pInstruction->m_StructuredSRVDecl.Space = 0;
         if(b51PlusShader)
         {
-            pInstruction->m_StructuredSRVDecl.Space = (UINT)(*m_pCurrentToken++);
+            pInstruction->m_StructuredSRVDecl.Space = (UINT)(ReadTokenSafe(m_pCurrentToken)); m_pCurrentToken = AdvanceTokenPointer(m_pCurrentToken);
         }
         break;
     case D3D11_SB_OPCODE_SYNC:
@@ -1010,7 +1056,7 @@ void CShaderCodeParser::ParseInstruction(CInstruction* pInstruction)
             break;
         }
     }
-    m_pCurrentToken = pStart + InstructionLength;
+    m_pCurrentToken = AdvanceTokenPointer(pStart, InstructionLength);
 }
 
 // ****************************************************************************

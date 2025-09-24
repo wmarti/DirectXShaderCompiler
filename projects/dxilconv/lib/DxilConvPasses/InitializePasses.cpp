@@ -23,7 +23,8 @@ using namespace llvm;
 
 
 // Place to put our private pass initialization for opt.exe.
-void __cdecl initializeDxilConvPasses(PassRegistry &Registry) {
+// Remove __cdecl for ARM64 compatibility - it's x86-specific
+void initializeDxilConvPasses(PassRegistry &Registry) {
   initializeScopeNestedCFGPass(Registry);
   initializeScopeNestInfoWrapperPassPass(Registry);
   initializeNormalizeDxilPassPass(Registry);

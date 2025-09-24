@@ -26,6 +26,12 @@ typedef _Return_type_success_(return >= 0) long HRESULT;
 
 #include <stdarg.h>
 #include <system_error>
+
+#ifdef USE_WSL_STUBS
+// When using WSL stubs, include basic Windows types first
+#include "wsl_types.h"
+#endif
+
 #include "dxc/Support/exception.h"
 #include "dxc/Support/WinAdapter.h"
 
@@ -97,14 +103,42 @@ void CheckLLVMErrorCode(const std::error_code &ec);
 #define IFCOOM(x)   { if (nullptr == (x)) { hr = E_OUTOFMEMORY; goto Cleanup; } }
 #define IFROOM(x)   { if (nullptr == (x)) { return E_OUTOFMEMORY; } }
 #define IFCPTR(x)   { if (nullptr == (x)) { hr = E_POINTER; goto Cleanup; }}
+#ifdef __EXCEPTIONS
 #define IFT(x)      { HRESULT __hr = (x); if (DXC_FAILED(__hr)) throw ::hlsl::Exception(__hr); }
+#else
+#define IFT(x)      { HRESULT __hr = (x); if (DXC_FAILED(__hr)) abort(); }
+#endif
+#ifdef __EXCEPTIONS
 #define IFTBOOL(x,y){ if (!(x)) throw ::hlsl::Exception(y); }
+#else
+#define IFTBOOL(x,y){ if (!(x)) abort(); }
+#endif
+#ifdef __EXCEPTIONS
 #define IFTOOM(x)   { if (nullptr == (x)) { throw ::hlsl::Exception(E_OUTOFMEMORY); }}
+#else
+#define IFTOOM(x)   { if (nullptr == (x)) { abort(); }}
+#endif
+#ifdef __EXCEPTIONS
 #define IFTPTR(x)   { if (nullptr == (x)) { throw ::hlsl::Exception(E_POINTER); }}
+#else
+#define IFTPTR(x)   { if (nullptr == (x)) { abort(); }}
+#endif
+#ifdef __EXCEPTIONS
 #define IFTARG(x)   { if (!(x)) { throw ::hlsl::Exception(E_INVALIDARG); }}
+#else
+#define IFTARG(x)   { if (!(x)) { abort(); }}
+#endif
 #define IFTLLVM(x)  { CheckLLVMErrorCode(x); }
+#ifdef __EXCEPTIONS
 #define IFTMSG(x, msg) { HRESULT __hr = (x); if (DXC_FAILED(__hr)) throw ::hlsl::Exception(__hr, msg); }
+#else
+#define IFTMSG(x, msg) { HRESULT __hr = (x); if (DXC_FAILED(__hr)) abort(); }
+#endif
+#ifdef __EXCEPTIONS
 #define IFTBOOLMSG(x, y, msg) { if (!(x)) throw ::hlsl::Exception(y, msg); }
+#else
+#define IFTBOOLMSG(x, y, msg) { if (!(x)) abort(); }
+#endif
 
 // Propagate an C++ exception into an HRESULT.
 #define CATCH_CPP_ASSIGN_HRESULT() \
@@ -123,8 +157,13 @@ void CheckLLVMErrorCode(const std::error_code &ec);
   catch (...)                               { return E_FAIL; }
 
 template<typename T> T *VerifyNullAndThrow(T *p) {
-  if (p == nullptr)
+  if (p == nullptr) {
+#ifdef __EXCEPTIONS
     throw std::bad_alloc();
+#else
+    abort();
+#endif
+  }
   return p;
 }
 #define VNT(__p) VerifyNullAndThrow(__p)

@@ -215,7 +215,13 @@ static void **GetBucketFor(unsigned Hash, void **Buckets, unsigned NumBuckets) {
 /// AllocateBuckets - Allocated initialized bucket memory.
 static void **AllocateBuckets(unsigned NumBuckets) {
   void **Buckets = static_cast<void**>(calloc(NumBuckets+1, sizeof(void*)));
-  if (Buckets == nullptr) throw std::bad_alloc(); // HLSL Change
+  if (Buckets == nullptr) {
+#ifdef __EXCEPTIONS
+    throw std::bad_alloc(); // HLSL Change
+#else
+    abort(); // Cannot allocate memory
+#endif
+  }
   // Set the very last bucket to be a non-null "pointer".
   Buckets[NumBuckets] = reinterpret_cast<void*>(-1);
   return Buckets;

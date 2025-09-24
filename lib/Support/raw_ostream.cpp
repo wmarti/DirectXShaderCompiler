@@ -795,12 +795,16 @@ raw_string_ostream::~raw_string_ostream() {
   // C++ and exception in destructors don't play nice. The proper pattern
   // here is to have the raw_string_ostream's owner flush before destruction
   // and take appropriate action, like throwing or returning an error value.
+#ifdef __EXCEPTIONS
   try {
     flush();
   }
   catch (const std::bad_alloc &) {
     // Don't std::terminate()
   }
+#else
+  flush();
+#endif
 #endif // HLSL Change Ends
 }
 

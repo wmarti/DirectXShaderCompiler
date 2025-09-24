@@ -20,6 +20,7 @@
 #ifdef __cplusplus
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <climits>
 #include <cstring>
 #include <cwchar>
@@ -79,6 +80,7 @@
 #define STDAPI_(type) extern "C" type STDAPICALLTYPE
 #define STDMETHODIMP HRESULT STDMETHODCALLTYPE
 #define STDMETHODIMP_(type) type STDMETHODCALLTYPE
+#define __override override
 
 #define UNREFERENCED_PARAMETER(P) (void)(P)
 
@@ -365,6 +367,8 @@
 
 #ifdef __cplusplus
 
+// Skip basic type definitions if using WSL headers (they provide their own)
+#ifndef USING_WSL_HEADERS
 typedef unsigned char BYTE;
 typedef unsigned char *LPBYTE;
 
@@ -378,6 +382,12 @@ typedef int INT;
 typedef long LONG;
 typedef unsigned int UINT;
 typedef unsigned long ULONG;
+#else
+// When using WSL headers, some types need to be compatible
+typedef uint32_t ULONG;  // WSL uses uint32_t
+typedef int32_t LONG;    // WSL uses int32_t
+#endif
+#ifndef USING_WSL_HEADERS
 typedef long long LONGLONG;
 typedef long long LONG_PTR;
 typedef unsigned long long ULONGLONG;
@@ -385,6 +395,7 @@ typedef unsigned long long ULONGLONG;
 typedef uint16_t WORD;
 typedef uint32_t DWORD;
 typedef DWORD *LPDWORD;
+#endif
 
 typedef uint32_t UINT32;
 typedef uint64_t UINT64;
@@ -538,6 +549,14 @@ typedef union _ULARGE_INTEGER {
 } ULARGE_INTEGER;
 
 typedef ULARGE_INTEGER *PULARGE_INTEGER;
+
+// Cross-platform timing functions
+inline void QueryPerformanceCounter(LARGE_INTEGER* counter) {
+  auto now = std::chrono::high_resolution_clock::now();
+  auto time_point = now.time_since_epoch();
+  auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(time_point);
+  counter->QuadPart = microseconds.count();
+}
 
 typedef struct tagSTATSTG {
   LPOLESTR pwcsName;

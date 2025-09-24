@@ -10,6 +10,14 @@
 ///////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+// Include cross-platform support first to ensure proper type definitions
+#include "Support/DXIncludes.h"
+
+// Ensure IMalloc is fully defined before Global.h forward declares it
+#ifndef _WIN32
+#include "dxc/Support/WinAdapter.h"
+#endif
+
 #include "dxc/DXIL/DXIL.h"
 #include "dxc/DxilContainer/DxilContainer.h"
 #include "dxc/DxilContainer/DxilContainerReader.h"
@@ -43,9 +51,11 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
+// ATL is Windows-only, microcom.h provides CComPtr for cross-platform
+#ifdef _WIN32
 #include <atlbase.h>
+#endif
 #include "dxc/Support/microcom.h"
-#include "Support/DXIncludes.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MSFileSystem.h"
@@ -57,7 +67,14 @@
 
 #include "dxc/DxilContainer/DxilPipelineStateValidation.h"
 
+#ifdef _WIN32
 #include "Tracing/DxcRuntimeEtw.h"
+#else
+// ETW tracing is Windows-only, stub out on other platforms
+#define DxcRuntimeEtw_DxcTranslate_Start()
+#define DxcRuntimeEtw_DxcTranslate_Stop(hr)
+#define DxcRuntimeEtw_DxcTranslate_TranslateStats(a,b,c,d)
+#endif
 
 #include <vector>
 #include <map>
@@ -283,14 +300,14 @@ public:
 
   ~DxbcConverter();
 
-  __override HRESULT STDMETHODCALLTYPE Convert(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
+  virtual HRESULT STDMETHODCALLTYPE Convert(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
                                                _In_ UINT32 DxbcSize,
                                                _In_opt_z_ LPCWSTR pExtraOptions,
                                                _Outptr_result_bytebuffer_maybenull_(*pDxilSize) LPVOID *ppDxil,
                                                _Out_ UINT32 *pDxilSize,
-                                               _Outptr_result_maybenull_z_ LPWSTR *ppDiag); 
+                                               _Outptr_result_maybenull_z_ LPWSTR *ppDiag) override; 
 
-  __override HRESULT STDMETHODCALLTYPE ConvertInDriver(_In_reads_bytes_(8) const UINT32 *pBytecode,
+  virtual HRESULT STDMETHODCALLTYPE ConvertInDriver(_In_reads_bytes_(8) const UINT32 *pBytecode,
                                                        _In_opt_z_ LPCVOID pInputSignature,
                                                        _In_ UINT32 NumInputSignatureElements,
                                                        _In_opt_z_ LPCVOID pOutputSignature,
@@ -299,7 +316,7 @@ public:
                                                        _In_ UINT32 NumPatchConstantSignatureElements,
                                                        _In_opt_z_ LPCWSTR pExtraOptions,
                                                        _Out_ IDxcBlob **ppDxilModule,
-                                                       _Outptr_result_maybenull_z_ LPWSTR *ppDiag);
+                                                       _Outptr_result_maybenull_z_ LPWSTR *ppDiag) override;
 
 protected:
   LLVMContext m_Ctx;
@@ -405,11 +422,12 @@ protected:
     vector<pair<unsigned, BasicBlock*> > SwitchCases;  // Switch
 
     Scope() : Kind(Kind::Function), pPreScopeBB(nullptr), pPostScopeBB(nullptr), NameIndex(0), 
-              pThenBB(nullptr), pElseBB(nullptr), pCond(nullptr),
-              pLoopBB(nullptr), ContinueIndex(0), LoopBreakIndex(0),
-              pDefaultBB(nullptr), pSelector(nullptr), CaseGroupIndex(0), SwitchBreakIndex(0),
-              LabelIdx(0), CallIdx(0), ReturnTokenOffset(0), ReturnIndex(0), bEntryFunc(false),
-              pHullLoopBB(nullptr), HullLoopBreakIndex(0), pInductionVar(nullptr), HullLoopTripCount(0) {}
+              pThenBB(nullptr) // Only initialize first member of the union
+    {
+      // Initialize other union members based on Kind if needed
+      pElseBB = nullptr;
+      pCond = nullptr;
+    }
 
     void SetEntry(bool b = true) { DXASSERT_NOMSG(Kind==Function); bEntryFunc = b; }
     bool IsEntry() const { DXASSERT_NOMSG(Kind==Function); return bEntryFunc; }

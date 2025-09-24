@@ -11,6 +11,9 @@
 
 #pragma once
 
+// Include basic Windows types
+#include "Support/windows.h"
+
 //has dependencies on D3D10TokenizedProgramFormat.hpp! make sure to include that too!
 
 typedef UINT CShaderToken;
@@ -1503,6 +1506,22 @@ public:
 // ****************************************************************************
 class CShaderAsm
 {
+protected:
+    // Buffer where the binary representation is built
+    __field_ecount_part(m_BufferSize, m_Index) UINT*  m_dwFunc;
+    // Index where to place the next token in the m_dwFunc array
+    UINT    m_Index;
+    // Index of the start of the current instruction in the m_dwFunc array
+    UINT    m_StartOpIndex;
+    // Current buffer size in UINTs
+    UINT    m_BufferSize;
+    // Current statement index of the current vertex shader
+    UINT    m_StatementIndex;
+    // Number of executable instructions in the shader
+    UINT    m_NumExecutableInstructions;
+    // "true" when the current instruction is executable
+    bool    m_bExecutableInstruction;
+
 public:
     CShaderAsm():
         m_dwFunc(NULL),
@@ -2416,7 +2435,11 @@ public:
         UINT FullSizeInUINTs = SizeInUINTs + 2; // include opcode and size
         if( FullSizeInUINTs < SizeInUINTs || FullSizeInUINTs + m_Index < FullSizeInUINTs )   // check for overflow
         {
+#ifdef __EXCEPTIONS
             throw E_FAIL;
+#else
+            abort(); // Cannot continue without memory
+#endif
         }
         if( m_Index + FullSizeInUINTs >= m_BufferSize ) // If custom data is going to overflow the buffer, reserve more memory
         {
@@ -2505,14 +2528,22 @@ protected:
             (m_BufferSize + SizeInUINTs) < m_BufferSize ||  // overflow with adding SizeInUINTs
             NewSize < (m_BufferSize + SizeInUINTs) )        // overflow with adding 1024
         {
+#ifdef __EXCEPTIONS
             throw E_FAIL;
+#else
+            abort(); // Cannot continue without memory
+#endif
         }
         if (m_BufferSize < (m_Index + SizeInUINTs))
         {
             UINT* pNewBuffer = (UINT*)malloc(NewSize*sizeof(UINT));
             if (pNewBuffer == NULL)
             {
+#ifdef __EXCEPTIONS
                 throw E_OUTOFMEMORY;
+#else
+                abort(); // Cannot continue without memory
+#endif
             }
             memcpy(pNewBuffer, m_dwFunc, sizeof(UINT)*m_Index);
             free(m_dwFunc);
@@ -2520,20 +2551,6 @@ protected:
             m_BufferSize = NewSize;
         }
     }
-    // Buffer where the binary representation is built
-    __field_ecount_part(m_BufferSize, m_Index) UINT*  m_dwFunc;
-    // Index where to place the next token in the m_dwFunc array
-    UINT    m_Index;
-    // Index of the start of the current instruction in the m_dwFunc array
-    UINT    m_StartOpIndex;
-    // Current buffer size in UINTs
-    UINT    m_BufferSize;
-    // Current statement index of the current vertex shader
-    UINT    m_StatementIndex;
-    // Number of executable instructions in the shader
-    UINT    m_NumExecutableInstructions;
-    // "true" when the current instruction is executable
-    bool    m_bExecutableInstruction;
 };
 
 //*****************************************************************************
@@ -2544,6 +2561,12 @@ protected:
 
 class CShaderCodeParser
 {
+protected:
+    // Move member declarations to the beginning so they're available for initializer lists
+    CShaderToken*   m_pCurrentToken;
+    CShaderToken*   m_pShaderCode;
+    CShaderToken*   m_pShaderEndToken;
+
 public:
     CShaderCodeParser():
         m_pCurrentToken(NULL),
@@ -2593,12 +2616,6 @@ public:
 
         return pRet;
     }
-    
-protected:
-    CShaderToken*   m_pCurrentToken;
-    CShaderToken*   m_pShaderCode;
-    // Points to the last token of the current shader
-    CShaderToken*   m_pShaderEndToken;
 };
 
 }; // name space D3D10ShaderBinary

@@ -18,10 +18,19 @@
 
 #define DXBCCONV_DBG   0
 
+#ifndef _WIN32
+// Define CLSID_DxbcConverter for Unix/macOS builds
+const CLSID CLSID_DxbcConverter = { /* 4900391E-B752-4EDD-A885-6FB76E25ADDB */
+  0x4900391e,
+  0xb752,
+  0x4edd,
+  { 0xa8, 0x85, 0x6f, 0xb7, 0x6e, 0x25, 0xad, 0xdb }
+};
+#endif
 
 namespace hlsl {
 
-__override HRESULT STDMETHODCALLTYPE DxbcConverter::Convert(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
+HRESULT STDMETHODCALLTYPE DxbcConverter::Convert(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
                                                _In_ UINT32 DxbcSize,
                                                _In_opt_z_ LPCWSTR pExtraOptions,
                                                _Outptr_result_bytebuffer_maybenull_(*pDxilSize) LPVOID *ppDxil,
@@ -55,7 +64,7 @@ __override HRESULT STDMETHODCALLTYPE DxbcConverter::Convert(_In_reads_bytes_(Dxb
     return hr;
 }
 
-__override HRESULT STDMETHODCALLTYPE DxbcConverter::ConvertInDriver(_In_reads_bytes_(8) const UINT32 *pBytecode,
+HRESULT STDMETHODCALLTYPE DxbcConverter::ConvertInDriver(_In_reads_bytes_(8) const UINT32 *pBytecode,
                                                        _In_opt_z_ LPCVOID pInputSignature,
                                                        _In_ UINT32 NumInputSignatureElements,
                                                        _In_opt_z_ LPCVOID pOutputSignature,

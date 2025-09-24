@@ -101,6 +101,7 @@ public:
 
     const KeyT EmptyKey = getEmptyKey(), TombstoneKey = getTombstoneKey();
     unsigned NumEntries = getNumEntries();
+    (void)NumEntries; // Suppress unused variable warning in release builds
     for (BucketT *P = getBuckets(), *E = getBucketsEnd(); P != E; ++P) {
       if (!KeyInfoT::isEqual(P->getFirst(), EmptyKey)) {
         if (!KeyInfoT::isEqual(P->getFirst(), TombstoneKey)) {

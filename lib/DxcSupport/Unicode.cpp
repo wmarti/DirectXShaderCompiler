@@ -181,7 +181,11 @@ bool UTF8ToUTF16String(const char *pUTF8, size_t cbUTF8, std::wstring *pUTF16) {
 std::wstring UTF8ToUTF16StringOrThrow(_In_z_ const char *pUTF8) {
   std::wstring result;
   if (!UTF8ToUTF16String(pUTF8, &result)) {
+#ifdef __EXCEPTIONS
     throw hlsl::Exception(DXC_E_STRING_ENCODING_FAILED);
+#else
+    abort();
+#endif
   }
   return result;
 }
@@ -233,7 +237,11 @@ bool UTF16ToUTF8String(const wchar_t *pUTF16, std::string *pUTF8) {
 std::string UTF16ToUTF8StringOrThrow(_In_z_ const wchar_t *pUTF16) {
   std::string result;
   if (!UTF16ToUTF8String(pUTF16, &result)) {
+#ifdef __EXCEPTIONS
     throw hlsl::Exception(DXC_E_STRING_ENCODING_FAILED);
+#else
+    abort();
+#endif
   }
   return result;
 }

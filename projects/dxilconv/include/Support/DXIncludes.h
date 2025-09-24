@@ -17,6 +17,8 @@
 // This is a platform-specific file.
 // Do not add LLVM/Clang or DXIL files to this file.
 
+#ifdef _WIN32
+// Windows-specific includes
 #define NOMINMAX 1
 #define WIN32_LEAN_AND_MEAN 1
 #define VC_EXTRALEAN 1
@@ -37,3 +39,8 @@
 #endif
 
 #include <ShaderBinary/ShaderBinary.h>
+
+#else
+// Non-Windows platforms - use cross-platform version
+#include "DXIncludes_CrossPlatform.h"
+#endif

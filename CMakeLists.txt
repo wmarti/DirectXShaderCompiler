@@ -1,5 +1,5 @@
 # See docs/CMake.html for instructions about how to build LLVM with CMake.
-cmake_minimum_required(VERSION 2.8.12.2)
+cmake_minimum_required(VERSION 3.5)
 
 if (NOT "${DXC_CMAKE_BEGINS_INCLUDE}" STREQUAL "")
   include(${DXC_CMAKE_BEGINS_INCLUDE})
@@ -18,9 +18,8 @@ if (POLICY CMP0051)
   # CMake 3.1 and higher include generator expressions of the form
   # $<TARGETLIB:obj> in the SOURCES property.  These need to be
   # stripped everywhere that access the SOURCES property, so we just
-  # defer to the OLD behavior of not including generator expressions
-  # in the output for now.
-  cmake_policy(SET CMP0051 OLD)
+  # use the NEW behavior as required by modern CMake.
+  cmake_policy(SET CMP0051 NEW)
 endif()
 
 if(CMAKE_VERSION VERSION_LESS 3.1.20141117)
@@ -227,15 +226,16 @@ set(LLVM_EXAMPLES_BINARY_DIR ${LLVM_BINARY_DIR}/examples)
 set(LLVM_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 
 # HLSL removed targets AArch64, ARM, BPF, CppBackend, Hexagon, Mips, MSP430, PowerPC, Sparc, SystemZ, X86, XCore
+# For DXBC converter on ARM64 macOS, we don't need GPU targets
 set(LLVM_ALL_TARGETS
-  AMDGPU
-  NVPTX
+  # AMDGPU
+  # NVPTX
   )
 
 # List of targets with JIT support:
 set(LLVM_TARGETS_WITH_JIT X86 PowerPC AArch64 ARM Mips SystemZ)
 
-set(LLVM_TARGETS_TO_BUILD "all"
+set(LLVM_TARGETS_TO_BUILD ""
     CACHE STRING "Semicolon-separated list of targets to build, or \"all\".")
 
 set(LLVM_EXPERIMENTAL_TARGETS_TO_BUILD ""
@@ -648,7 +648,7 @@ else()
 endif()
 
 if(LLVM_INCLUDE_TESTS)
-  add_subdirectory(utils/unittest)
+  # add_subdirectory(utils/unittest) # Directory doesn't exist in this port
 endif()
 
 foreach( binding ${LLVM_BINDINGS_LIST} )

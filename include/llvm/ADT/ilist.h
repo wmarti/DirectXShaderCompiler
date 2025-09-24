@@ -421,6 +421,7 @@ public:
     this->setPrev(CurNode, New);
 
     // HLSL Change Begin: Undo insertion if exception
+#ifdef __EXCEPTIONS
     try {
       this->addNodeToList(New);  // Notify traits that we added a node...
     } catch (...) {
@@ -434,6 +435,9 @@ public:
       this->setNext(New, nullptr);
       throw;
     }
+#else
+    this->addNodeToList(New);  // Notify traits that we added a node...
+#endif
     // HLSL Change End
     return New;
   }

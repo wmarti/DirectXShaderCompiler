@@ -53,10 +53,13 @@ template <class T> void swap(CComHeapPtr<T> &a, CComHeapPtr<T> &b) {
 
 #include "dxc/Support/WinAdapter.h"
 
-#ifdef __cplusplus
+// Skip enum flag definitions if we're using WSL headers (they provide their own)
+#if defined(__cplusplus) && !defined(USING_WSL_HEADERS)
 // Define operator overloads to enable bit operations on enum values that are
 // used to define flags. Use DEFINE_ENUM_FLAG_OPERATORS(YOUR_TYPE) to enable these
 // operators on YOUR_TYPE.
+#ifndef _ENUM_FLAG_INTEGER_FOR_SIZE_DEFINED
+#define _ENUM_FLAG_INTEGER_FOR_SIZE_DEFINED
 extern "C++" {
     template <size_t S>
     struct _ENUM_FLAG_INTEGER_FOR_SIZE;
@@ -87,6 +90,9 @@ extern "C++" {
     };
 
 }
+#endif // _ENUM_FLAG_INTEGER_FOR_SIZE_DEFINED
+
+#ifndef DEFINE_ENUM_FLAG_OPERATORS
 #define DEFINE_ENUM_FLAG_OPERATORS(ENUMTYPE) \
 extern "C++" { \
 inline ENUMTYPE operator | (ENUMTYPE a, ENUMTYPE b) { return ENUMTYPE(((_ENUM_FLAG_SIZED_INTEGER<ENUMTYPE>::type)a) | ((_ENUM_FLAG_SIZED_INTEGER<ENUMTYPE>::type)b)); } \
@@ -97,6 +103,7 @@ inline ENUMTYPE operator ~ (ENUMTYPE a) { return ENUMTYPE(~((_ENUM_FLAG_SIZED_IN
 inline ENUMTYPE operator ^ (ENUMTYPE a, ENUMTYPE b) { return ENUMTYPE(((_ENUM_FLAG_SIZED_INTEGER<ENUMTYPE>::type)a) ^ ((_ENUM_FLAG_SIZED_INTEGER<ENUMTYPE>::type)b)); } \
 inline ENUMTYPE &operator ^= (ENUMTYPE &a, ENUMTYPE b) { return (ENUMTYPE &)(((_ENUM_FLAG_SIZED_INTEGER<ENUMTYPE>::type &)a) ^= ((_ENUM_FLAG_SIZED_INTEGER<ENUMTYPE>::type)b)); } \
 }
+#endif // DEFINE_ENUM_FLAG_OPERATORS
 #else
 #define DEFINE_ENUM_FLAG_OPERATORS(ENUMTYPE) // NOP, C allows these operators.
 #endif

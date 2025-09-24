@@ -12,6 +12,20 @@
 #ifndef __DXBC_CONVERTER__H__
 #define __DXBC_CONVERTER__H__
 
+// Include basic types and SAL annotations
+#include "dxc/Support/WinAdapter.h"
+#include "dxc/Support/WinIncludes.h"
+#include "dxc/dxcapi.h"
+
+// Additional SAL annotations if not defined
+#ifndef _Outptr_result_bytebuffer_maybenull_
+#define _Outptr_result_bytebuffer_maybenull_(x)
+#endif
+
+#ifndef _Outptr_result_maybenull_z_
+#define _Outptr_result_maybenull_z_
+#endif
+
 #ifndef _MSC_VER
 extern "C"
 #endif
@@ -57,6 +71,7 @@ IDxbcConverter : public IUnknown {
     _Outptr_result_maybenull_z_ LPWSTR *ppDiag) = 0;
 };
 
+#ifdef _WIN32
 __declspec(selectany)
 extern const CLSID CLSID_DxbcConverter = { /* 4900391E-B752-4EDD-A885-6FB76E25ADDB */
   0x4900391e,
@@ -64,5 +79,9 @@ extern const CLSID CLSID_DxbcConverter = { /* 4900391E-B752-4EDD-A885-6FB76E25AD
   0x4edd,
   { 0xa8, 0x85, 0x6f, 0xb7, 0x6e, 0x25, 0xad, 0xdb }
 };
+#else
+// Forward declaration for Unix/macOS
+extern const CLSID CLSID_DxbcConverter;
+#endif
 
 #endif
