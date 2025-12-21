@@ -19,16 +19,23 @@ fi
 
 # Create build directory
 BUILD_DIR="build_dxilconv_macos"
-if [ -d "$BUILD_DIR" ]; then
-    echo -e "${YELLOW}Build directory exists. Cleaning...${NC}"
-    rm -rf "$BUILD_DIR"
+if [ ! -d "$BUILD_DIR" ]; then
+    mkdir -p "$BUILD_DIR"
 fi
-mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 # Configure with CMake
 echo -e "${GREEN}Configuring CMake...${NC}"
+# Use local headers if available
+LOCAL_DX_HEADERS="../../../directx-headers/include"
+DX_ARGS=""
+if [ -d "$LOCAL_DX_HEADERS" ]; then
+    DX_ARGS="-DD3D12_macOS_INCLUDE_DIR=$LOCAL_DX_HEADERS"
+    echo -e "${GREEN}Using local DirectX headers from $LOCAL_DX_HEADERS${NC}"
+fi
+
 cmake .. \
+    $DX_ARGS \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \

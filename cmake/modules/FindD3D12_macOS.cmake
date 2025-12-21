@@ -10,9 +10,11 @@
 # Can be installed via: brew install directx-headers
 
 # First try to find directx headers in common locations
+# Priority: 1. Local headers in third_party 2. System headers
 find_path(D3D12_INCLUDE_DIR
     NAMES d3d12.h
     HINTS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../directx-headers/include/directx
         /opt/homebrew/include/directx
         /opt/homebrew/Cellar/directx-headers/*/include/directx
         /usr/local/include/directx
@@ -25,11 +27,13 @@ find_path(D3D12_INCLUDE_DIR
 find_path(DXGI_INCLUDE_DIR
     NAMES dxgiformat.h dxgicommon.h
     HINTS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../directx-headers/include/directx
         /opt/homebrew/include/directx
         /opt/homebrew/Cellar/directx-headers/*/include/directx
         /usr/local/include/directx
         /usr/local/Cellar/directx-headers/*/include/directx
         ${CMAKE_PREFIX_PATH}/include/directx
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../directx-headers/include/wsl
         /opt/homebrew/include/wsl
         /opt/homebrew/Cellar/directx-headers/*/include/wsl
         /usr/local/include/wsl
@@ -42,6 +46,7 @@ find_path(DXGI_INCLUDE_DIR
 find_path(WSL_INCLUDE_DIR
     NAMES winadapter.h
     HINTS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../directx-headers/include/wsl
         /opt/homebrew/include/wsl
         /opt/homebrew/Cellar/directx-headers/*/include/wsl
         /usr/local/include/wsl
@@ -67,7 +72,8 @@ endif()
 set(D3D12_LIBRARIES "")
 
 include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(D3D12
+# Match package name to calling package name (D3D12_macOS)
+find_package_handle_standard_args(D3D12_macOS
     DEFAULT_MSG
     D3D12_INCLUDE_DIR
     DXGI_INCLUDE_DIR
