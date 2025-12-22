@@ -37,10 +37,6 @@ conversion fails with `0x80004005`.  To enable the suite:
 2. Point CMake at the generated LLVM package:
    `export LLVM_DIR=$PWD/build_dxilconv_macos/share/llvm/cmake` (or equivalent).
 
-The large Halo 3 regression set lives in
-`projects/dxilconv/test/halo3_shaders.tar.gz`.  Unpack it only when you need to
-run the upstream `run_full_tests.sh` script.
-
 ## Integration
 
 After building, copy the dylib/binary into your Xenia build or adjust search
