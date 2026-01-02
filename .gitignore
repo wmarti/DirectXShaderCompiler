@@ -83,3 +83,14 @@ projects/dxilconv/test/test_output/
 build*/
 build_*/
 
+
+# Local perf/benchmark artifacts (keep untracked)
+/AGENTS.md
+/NEXT_STEPS.md
+/bench_assets
+/bench_dump_final_test.sh
+/bench_tools
+/dump_final_test
+/projects/dxilconv/test/halo3_shaders
+/run_dxilconv_perf_suite.sh
+

@@ -57,6 +57,7 @@
 #endif
 #include "dxc/Support/microcom.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MSFileSystem.h"
 #include "dxc/Support/FileIOHelper.h"
@@ -79,6 +80,7 @@
 #include <vector>
 #include <map>
 #include <algorithm>
+#include <cstdint>
 
 #pragma once
 namespace llvm {
@@ -94,6 +96,7 @@ using std::pair;
 using std::vector;
 using std::map;
 using std::unique_ptr;
+using llvm::DenseMap;
 
 
 struct D3D12DDIARG_SIGNATURE_ENTRY_0012 {
@@ -219,33 +222,19 @@ public:
   vector<UsedElement> m_UsedElements;
 
   // Elements with stream, register and component.
-  struct RegAndCompAndStream {
-    unsigned Reg;
-    unsigned Comp;
-    unsigned Stream;
-    RegAndCompAndStream(unsigned r, unsigned c, unsigned s) : Reg(r), Comp(c), Stream(s) {}
-    bool operator<(const RegAndCompAndStream &o) const {
-      if (Stream < o.Stream)
-        return true;
-      else if (Stream == o.Stream) {
-        if (Reg < o.Reg)
-          return true;
-        else if (Reg == o.Reg)
-          return Comp < o.Comp;
-        else
-          return false;
-      } else
-        return false;
-    }
-  };
-  map<RegAndCompAndStream, unsigned> m_DxbcRegisterToSignatureElement;
+  static uint64_t MakeRegAndCompKey(unsigned Reg, unsigned Comp, unsigned Stream) {
+    return (static_cast<uint64_t>(Stream) << 48) |
+           (static_cast<uint64_t>(Reg) << 16) |
+           static_cast<uint64_t>(Comp);
+  }
+  DenseMap<uint64_t, unsigned> m_DxbcRegisterToSignatureElement;
 
   const DxilSignatureElement *GetElement(unsigned Reg, unsigned Comp) const {
     const unsigned Stream = 0;
     return GetElementWithStream(Reg, Comp, Stream);
   }
   const DxilSignatureElement *GetElementWithStream(unsigned Reg, unsigned Comp, unsigned Stream) const {
-    RegAndCompAndStream Key(Reg, Comp, Stream);
+    uint64_t Key = MakeRegAndCompKey(Reg, Comp, Stream);
     auto it = m_DxbcRegisterToSignatureElement.find(Key);
     if (it == m_DxbcRegisterToSignatureElement.end()) {
       return nullptr;
@@ -259,11 +248,15 @@ public:
   }
 
   // Elements that are System Generated Values (SVGs), without register.
-  map<D3D10_SB_OPERAND_TYPE, unsigned> m_DxbcSgvToSignatureElement;
+  static unsigned MakeSgvKey(D3D10_SB_OPERAND_TYPE SgvRegType) {
+    return static_cast<unsigned>(SgvRegType);
+  }
+  DenseMap<unsigned, unsigned> m_DxbcSgvToSignatureElement;
 
   const DxilSignatureElement *GetElement(D3D10_SB_OPERAND_TYPE SgvRegType) const {
-    DXASSERT(m_DxbcSgvToSignatureElement.find(SgvRegType) != m_DxbcSgvToSignatureElement.end(), "otherwise the element has not been added to the map");
-    unsigned ElemIdx = m_DxbcSgvToSignatureElement.find(SgvRegType)->second;
+    unsigned Key = MakeSgvKey(SgvRegType);
+    DXASSERT(m_DxbcSgvToSignatureElement.find(Key) != m_DxbcSgvToSignatureElement.end(), "otherwise the element has not been added to the map");
+    unsigned ElemIdx = m_DxbcSgvToSignatureElement.find(Key)->second;
     const DxilSignatureElement *E = &m_Signature.GetElement(ElemIdx);
     DXASSERT(!E->IsAllocated(), "otherwise signature elements were not set correctly");
     return E;
@@ -331,6 +324,12 @@ protected:
   
   bool m_bDisableHashCheck;
   bool m_bRunDxilCleanup;
+  bool m_bAutoSkipCleanup;
+  bool m_bUsesTempRegOps;
+  bool m_bEmitPsv;
+  bool m_bEmitSignatureParts;
+  bool m_bEmitRootSignature;
+  bool m_bEmitFeatureInfo;
 
   bool m_bLegacyCBufferLoad;
 
@@ -358,14 +357,14 @@ protected:
     unsigned NumComps;
     bool bIsAlloca;
   };
-  map<unsigned, IndexableReg> m_IndexableRegs;
-  map<unsigned, IndexableReg> m_PatchConstantIndexableRegs;
+  DenseMap<unsigned, IndexableReg> m_IndexableRegs;
+  DenseMap<unsigned, IndexableReg> m_PatchConstantIndexableRegs;
 
   // Shader resource register/rangeID maps.
-  map<unsigned, unsigned> m_SRVRangeMap;
-  map<unsigned, unsigned> m_UAVRangeMap;
-  map<unsigned, unsigned> m_CBufferRangeMap;
-  map<unsigned, unsigned> m_SamplerRangeMap;
+  DenseMap<unsigned, unsigned> m_SRVRangeMap;
+  DenseMap<unsigned, unsigned> m_UAVRangeMap;
+  DenseMap<unsigned, unsigned> m_CBufferRangeMap;
+  DenseMap<unsigned, unsigned> m_SamplerRangeMap;
 
   // Immediate constant buffer.
   GlobalVariable *m_pIcbGV;
@@ -458,8 +457,8 @@ protected:
   struct LabelEntry {
     Function *pFunc;
   };
-  map<unsigned, LabelEntry> m_Labels;
-  map<unsigned, LabelEntry> m_InterfaceFunctionBodies;
+  DenseMap<unsigned, LabelEntry> m_Labels;
+  DenseMap<unsigned, LabelEntry> m_InterfaceFunctionBodies;
   bool HasLabels() { return !m_Labels.empty() || !m_InterfaceFunctionBodies.empty(); }
 
   // Shared memory.
@@ -469,7 +468,7 @@ protected:
     unsigned Count;
     unsigned Id;
   };
-  map<unsigned, TGSMEntry> m_TGSMMap;
+  DenseMap<unsigned, TGSMEntry> m_TGSMMap;
   unsigned m_TGSMCount;
 
   // Geometry shader.
@@ -505,13 +504,13 @@ protected:
     }
   };
   map<InterfaceShaderResourceKey, unsigned> m_ClassInstanceSRVs;
-  map<unsigned, vector<unsigned>> m_FunctionTables;
+  DenseMap<unsigned, vector<unsigned>> m_FunctionTables;
   struct Interface {
     vector<unsigned> Tables;
     bool bDynamicallyIndexed;
     unsigned NumArrayEntries;
   };
-  map<unsigned, Interface> m_Interfaces;
+  DenseMap<unsigned, Interface> m_Interfaces;
   unsigned m_NumIfaces;
   unsigned m_FcallCount;
 
@@ -574,7 +573,7 @@ protected:
   void InsertInterfacesResourceDecls();
   const DxilResource& GetInterfacesSRVDecl(D3D10ShaderBinary::CInstruction &Inst);
   void DeclareIndexableRegisters();
-  void CleanupIndexableRegisterDecls(map<unsigned, IndexableReg> &IdxRegMap);
+  void CleanupIndexableRegisterDecls(DenseMap<unsigned, IndexableReg> &IdxRegMap);
   void RemoveUnreachableBasicBlocks();
   void CleanupGEP();
   

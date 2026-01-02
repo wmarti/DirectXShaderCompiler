@@ -124,17 +124,23 @@ DxbcConverter::DxbcConverter()
 , m_pSM(nullptr)
 , m_DxbcMajor(0)
 , m_DxbcMinor(0)
+, m_bDisableHashCheck(false)
+, m_bRunDxilCleanup(true)
+, m_bAutoSkipCleanup(false)
+, m_bUsesTempRegOps(false)
+, m_bEmitPsv(true)
+, m_bEmitSignatureParts(true)
+, m_bEmitRootSignature(true)
+, m_bEmitFeatureInfo(true)
+, m_bLegacyCBufferLoad(true)
+, m_DepthRegType(D3D10_SB_OPERAND_TYPE_NULL)
+, m_bHasStencilRef(false)
+, m_bHasCoverageOut(false)
 , m_pUnusedF32(nullptr)
 , m_pUnusedI32(nullptr)
 , m_NumTempRegs(0)
 , m_pIcbGV(nullptr)
-, m_bDisableHashCheck(false)
-, m_bRunDxilCleanup(true)
-, m_bLegacyCBufferLoad(true)
 , m_TGSMCount(0)
-, m_DepthRegType(D3D10_SB_OPERAND_TYPE_NULL)
-, m_bHasStencilRef(false)
-, m_bHasCoverageOut(false)
 , m_bControlPointPhase(false)
 , m_bPatchConstantPhase(false)
 , m_pInterfaceDataBuffer(nullptr)
@@ -184,6 +190,7 @@ void DxbcConverter::ConvertImpl(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
     *ppDiag = nullptr;
 
   // Parse pExtraOptions.
+  m_bUsesTempRegOps = false;
   ParseExtraOptions(pExtraOptions);
 
   // Create the module.
@@ -261,8 +268,8 @@ void DxbcConverter::ConvertImpl(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
     WritePart(pStream, DxilBuffer);
   });
 
-  SmallVector<char, 512> PSVBuffer; // 512 bytes is enough for 30 resources + header
-  {
+  if (m_bEmitPsv) {
+    SmallVector<char, 512> PSVBuffer; // 512 bytes is enough for 30 resources + header
     UINT uCBuffers = m_pPR->GetCBuffers().size();
     UINT uSamplers = m_pPR->GetSamplers().size();
     UINT uSRVs = m_pPR->GetSRVs().size();
@@ -279,8 +286,7 @@ void DxbcConverter::ConvertImpl(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
     });
   }
 
-  UINT64 featureBody = 0;
-  { // Append original IO signatures to DXIL blob
+  if (m_bEmitSignatureParts) { // Append original IO signatures to DXIL blob
     DXBCFourCC IOSigFourCCArray[] = {
       DXBC_InputSignature11_1,
       DXBC_InputSignature,
@@ -303,7 +309,12 @@ void DxbcConverter::ConvertImpl(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
         });
       }
     }
-    // Add DXBC_RootSignature and DXBC_ShaderFeatureInfo if present
+  }
+
+  if (m_bEmitRootSignature) {
+    UINT uBlob = DXIL_CONTAINER_BLOB_NOT_FOUND;
+    UINT uElemSize = 0;
+    const void* pBlobData = nullptr;
     IFT(dxbcReader.FindFirstPartKind(DXBC_RootSignature, &uBlob));
     if(uBlob != DXIL_CONTAINER_BLOB_NOT_FOUND) {
       IFT(dxbcReader.GetPartContent(uBlob, &pBlobData, &uElemSize));
@@ -311,16 +322,21 @@ void DxbcConverter::ConvertImpl(_In_reads_bytes_(DxbcSize) LPCVOID pDxbc,
         WritePart(pStream, pBlobData, uElemSize);
       });
     }
+  }
+
+  if (m_bEmitFeatureInfo) {
+    UINT uBlob = DXIL_CONTAINER_BLOB_NOT_FOUND;
+    UINT uElemSize = 0;
+    const void* pBlobData = nullptr;
     IFT(dxbcReader.FindFirstPartKind(DXBC_ShaderFeatureInfo, &uBlob));
     if(uBlob != DXIL_CONTAINER_BLOB_NOT_FOUND) {
       IFT(dxbcReader.GetPartContent(uBlob, &pBlobData, &uElemSize));
       pContainerWriter->AddPart(DXBC_ShaderFeatureInfo, uElemSize, [=](AbstractMemoryStream *pStream) {
         WritePart(pStream, pBlobData, uElemSize);
       });
-    }
-    else
-    {
-      // Add one anyway
+    } else {
+      // Add one anyway to keep downstream expectations.
+      UINT64 featureBody = 0;
       uElemSize = sizeof(UINT64);
       pContainerWriter->AddPart(DXBC_ShaderFeatureInfo, uElemSize, [=](AbstractMemoryStream *pStream) {
         WritePart(pStream, (void*)&featureBody, sizeof(featureBody));
@@ -368,6 +384,7 @@ void DxbcConverter::ConvertInDriverImpl(_In_reads_bytes_(8) const UINT32 *pByteC
     *ppDiag = nullptr;
 
   // Parse pExtraOptions.
+  m_bUsesTempRegOps = false;
   ParseExtraOptions(pExtraOptions);
 
   // Create the module.
@@ -437,12 +454,35 @@ void DxbcConverter::ParseExtraOptions(const wchar_t *pExtraOptions) {
 
   // This is temporary implementation for now.
   wstring Str(pExtraOptions);
+  if (Str.find(L"-fast") != wstring::npos) {
+    m_bRunDxilCleanup = false;
+    m_bEmitPsv = false;
+    m_bEmitSignatureParts = false;
+    m_bEmitRootSignature = false;
+    m_bEmitFeatureInfo = false;
+  }
+  if (Str.find(L"-skip-container-parts") != wstring::npos) {
+    m_bEmitPsv = false;
+    m_bEmitSignatureParts = false;
+    m_bEmitRootSignature = false;
+    m_bEmitFeatureInfo = false;
+  }
   if (Str.find(L"-disableHashCheck") != wstring::npos)
     m_bDisableHashCheck = true;
 
   // Opt out from DXIL cleanup pass.
   if (Str.find(L"-no-dxil-cleanup") != wstring::npos)
     m_bRunDxilCleanup = false;
+  if (Str.find(L"-auto-skip-cleanup") != wstring::npos)
+    m_bAutoSkipCleanup = true;
+  if (Str.find(L"-skip-psv") != wstring::npos)
+    m_bEmitPsv = false;
+  if (Str.find(L"-skip-signatures") != wstring::npos)
+    m_bEmitSignatureParts = false;
+  if (Str.find(L"-skip-root-signature") != wstring::npos)
+    m_bEmitRootSignature = false;
+  if (Str.find(L"-skip-feature-info") != wstring::npos)
+    m_bEmitFeatureInfo = false;
 }
 
 void DxbcConverter::SetShaderGlobalFlags(unsigned GlobalFlags) {
@@ -816,7 +856,9 @@ void DxbcConverter::ConvertSignature(SignatureHelper &SigHelper, DxilSignature &
   }
 
   // map range elements from SigHelper.m_ElementRecords to dxil signature element index
-  std::map<unsigned, unsigned> RangeElementToDxilElement;
+  const unsigned kInvalidRangeElement = UINT32_MAX;
+  std::vector<unsigned> range_element_to_dxil_element(
+      SigHelper.m_ElementRecords.size(), kInvalidRangeElement);
 
   for (size_t iElement = 0; iElement < SigHelper.m_ElementRecords.size(); iElement++) {
     const SignatureHelper::ElementRecord &SigElem = SigHelper.m_ElementRecords[iElement];
@@ -879,8 +921,8 @@ void DxbcConverter::ConvertSignature(SignatureHelper &SigHelper, DxilSignature &
           if (!(StartCol+Cols-1 < R.GetStartCol() || R.GetEndCol() < StartCol)) {
             // Found containment.
             bInRange = true;
-            auto itKeyDxilEl = RangeElementToDxilElement.find(iElement);
-            if (itKeyDxilEl == RangeElementToDxilElement.end()) {
+            unsigned range_dxil_index = range_element_to_dxil_element[iElement];
+            if (range_dxil_index == kInvalidRangeElement) {
               // First element in range
               unsigned iDxilElementIndex = (unsigned)SigHelper.m_Signature.GetElements().size();
               E.AppendSemanticIndex(SemanticIndex);
@@ -891,7 +933,7 @@ void DxbcConverter::ConvertSignature(SignatureHelper &SigHelper, DxilSignature &
                    iOtherEl < SigHelper.m_ElementRecords.size() && StartRow + Rows < R.StartRow + R.Rows;
                    iOtherEl++) {
                 // Skip elements that are part of another captured range already
-                if (RangeElementToDxilElement.find(iOtherEl) != RangeElementToDxilElement.end())
+                if (range_element_to_dxil_element[iOtherEl] != kInvalidRangeElement)
                   continue;
                 const SignatureHelper::ElementRecord &OtherEl = SigHelper.m_ElementRecords[iOtherEl];
                 // There should be no gaps for indexed element, so we're done if we find one.
@@ -904,7 +946,7 @@ void DxbcConverter::ConvertSignature(SignatureHelper &SigHelper, DxilSignature &
                   // indexed element should not have different start column.
                   if (OtherEl.StartRow == StartRow + Rows &&
                       StartCol == OtherEl.StartCol) {
-                    RangeElementToDxilElement[iOtherEl] = iDxilElementIndex;
+                    range_element_to_dxil_element[iOtherEl] = iDxilElementIndex;
                     Cols = std::max(Cols, OtherEl.Cols);
                     Rows++;
                     E.AppendSemanticIndex(OtherEl.SemanticIndex);
@@ -919,7 +961,7 @@ void DxbcConverter::ConvertSignature(SignatureHelper &SigHelper, DxilSignature &
             } else {
 #ifdef DBG
               // Verify match with range representative element.
-              DxilSignatureElement &RE = SigHelper.m_Signature.GetElement(itKeyDxilEl->second);
+              DxilSignatureElement &RE = SigHelper.m_Signature.GetElement(range_dxil_index);
               DXASSERT_DXBC(RE.GetCompType() == E.GetCompType());
               DXASSERT_DXBC(*RE.GetInterpolationMode() == *E.GetInterpolationMode());
 #endif
@@ -977,8 +1019,9 @@ void DxbcConverter::ConvertSignature(SignatureHelper &SigHelper, DxilSignature &
     case Semantic::Kind::StencilRef: {
       bUpdateRegMap = false;
       D3D10_SB_OPERAND_TYPE OperandRegType = DXBC::GetOperandRegType(E.GetKind(), /*IsOutput*/SigHelper.IsOutput());
-      DXASSERT_DXBC(SigHelper.m_DxbcSgvToSignatureElement.find(OperandRegType) == SigHelper.m_DxbcSgvToSignatureElement.end());
-      SigHelper.m_DxbcSgvToSignatureElement[OperandRegType] = (unsigned)iElem;
+      unsigned sgv_key = SigHelper.MakeSgvKey(OperandRegType);
+      DXASSERT_DXBC(SigHelper.m_DxbcSgvToSignatureElement.find(sgv_key) == SigHelper.m_DxbcSgvToSignatureElement.end());
+      SigHelper.m_DxbcSgvToSignatureElement[sgv_key] = (unsigned)iElem;
       break;
     }
     }
@@ -990,9 +1033,9 @@ void DxbcConverter::ConvertSignature(SignatureHelper &SigHelper, DxilSignature &
         unsigned r = E.GetStartRow() + iRow;
         for (unsigned iCol = 0; iCol < E.GetCols(); iCol++) {
           unsigned c = E.GetStartCol() + iCol;
-          SignatureHelper::RegAndCompAndStream Key(r, c, Stream);
-          DXASSERT(SigHelper.m_DxbcRegisterToSignatureElement.find(Key) == SigHelper.m_DxbcRegisterToSignatureElement.end(), "otherwise elements are wrong");
-          SigHelper.m_DxbcRegisterToSignatureElement[Key] = (unsigned)iElem;
+          uint64_t key = SigHelper.MakeRegAndCompKey(r, c, Stream);
+          DXASSERT(SigHelper.m_DxbcRegisterToSignatureElement.find(key) == SigHelper.m_DxbcRegisterToSignatureElement.end(), "otherwise elements are wrong");
+          SigHelper.m_DxbcRegisterToSignatureElement[key] = (unsigned)iElem;
         }
       }
     }
@@ -4790,7 +4833,10 @@ void DxbcConverter::DeclareIndexableRegisters() {
   }
 }
 
-void DxbcConverter::CleanupIndexableRegisterDecls(map<unsigned, IndexableReg> &IdxRegMap) {
+void DxbcConverter::CleanupIndexableRegisterDecls(DenseMap<unsigned, IndexableReg> &IdxRegMap) {
+  if (IdxRegMap.empty()) {
+    return;
+  }
   for (auto &IR : IdxRegMap) {
     if (IR.second.pValue32 && !IR.second.pValue32->hasNUsesOrMore(1)) {
       if (IR.second.bIsAlloca)
@@ -5687,6 +5733,7 @@ void DxbcConverter::EmitGSOutputRegisterStore(unsigned StreamId) {
       // 1. Load value from the corresponding temp reg.
       {
         Value *Args[2];
+        m_bUsesTempRegOps = true;
         Args[0] = m_pOP->GetU32Const((unsigned)OP::OpCode::TempRegLoad);  // OpCode
         Args[1] = m_pOP->GetU32Const(DXBC::GetRegIndex(TempReg, Comp));   // Linearized register index
         Function *F = m_pOP->GetOpFunc(OP::OpCode::TempRegLoad, pDxbcValueType);
@@ -5819,6 +5866,7 @@ void DxbcConverter::LoadOperand(OperandValue &SrcVal,
         BYTE Comp = OVH.GetComp();
 
         Value *Args[2];
+        m_bUsesTempRegOps = true;
         Args[0] = m_pOP->GetU32Const((unsigned)OP::OpCode::TempRegLoad);    // OpCode
         Args[1] = m_pOP->GetU32Const(DXBC::GetRegIndex(Reg, Comp));         // Linearized register index
         Function *F = m_pOP->GetOpFunc(OP::OpCode::TempRegLoad, pDxbcValueType);
@@ -5837,6 +5885,7 @@ void DxbcConverter::LoadOperand(OperandValue &SrcVal,
         Value *pValue1, *pValue2;
         {
           Value *Args[2];
+          m_bUsesTempRegOps = true;
           Args[0] = m_pOP->GetU32Const((unsigned)OP::OpCode::TempRegLoad);  // OpCode
           Args[1] = m_pOP->GetU32Const(DXBC::GetRegIndex(Reg, Comp));       // Linearized register index1
           Function *F = m_pOP->GetOpFunc(OP::OpCode::TempRegLoad, CompType::getU32().GetLLVMType(m_Ctx));
@@ -6530,6 +6579,7 @@ void DxbcConverter::StoreOperand(OperandValue &DstVal,
         if (!Mask.IsSet(c)) continue;
 
         Value *Args[3];
+        m_bUsesTempRegOps = true;
         Args[0] = m_pOP->GetU32Const((unsigned)OP::OpCode::TempRegStore); // OpCode
         Args[1] = m_pOP->GetU32Const(DXBC::GetRegIndex(Reg, c));          // Linearized register index
         Args[2] = MarkPrecise(CastDxbcValue(DstVal[c], ValueType, DxbcValueType), c); // Value
@@ -6550,6 +6600,7 @@ void DxbcConverter::StoreOperand(OperandValue &DstVal,
         }
 
         Value *Args[3];
+        m_bUsesTempRegOps = true;
         Args[0] = m_pOP->GetU32Const((unsigned)OP::OpCode::TempRegStore);   // OpCode
         Args[1] = m_pOP->GetU32Const(DXBC::GetRegIndex(Reg, c));            // Linearized register index 1
         Args[2] = MarkPrecise(m_pBuilder->CreateExtractValue(pSDT, 0), c);  // Value to store
@@ -6664,6 +6715,7 @@ void DxbcConverter::StoreOperand(OperandValue &DstVal,
         if (!Mask.IsSet(c)) continue;
 
         Value *Args[3];
+        m_bUsesTempRegOps = true;
         Args[0] = m_pOP->GetU32Const((unsigned)OP::OpCode::TempRegStore);             // OpCode
         unsigned TempReg = GetGSTempRegForOutputReg(Reg);
         Args[1] = m_pOP->GetU32Const(DXBC::GetRegIndex(TempReg, c));                  // Linearized register index
@@ -6760,6 +6812,7 @@ Value *DxbcConverter::LoadOperandIndexRelative(const D3D10ShaderBinary::COperand
     unsigned Comp = OpIndex.m_ComponentName;
 
     Value *Args[2];
+    m_bUsesTempRegOps = true;
     Args[0] = m_pOP->GetU32Const((unsigned)OP::OpCode::TempRegLoad);              // OpCode
     Args[1] = m_pOP->GetU32Const(DXBC::GetRegIndex(Reg, Comp)); // Linearized register index
     Function *F = m_pOP->GetOpFunc(OP::OpCode::TempRegLoad, Type::getInt32Ty(m_Ctx));
@@ -7115,10 +7168,17 @@ void DxbcConverter::Optimize() {
   IFTBOOL(!verifyModule(*m_pModule), DXC_E_IR_VERIFICATION_FAILED); // verifyModule returns true for failure
 #endif
 
-  // Verify that CFG is reducible.
-  IFTBOOL(IsReducible(*m_pModule, IrreducibilityAction::ThrowException), DXC_E_IRREDUCIBLE_CFG);
+  bool run_cleanup = m_bRunDxilCleanup;
+  if (run_cleanup && m_bAutoSkipCleanup) {
+    if (!m_bUsesTempRegOps && m_IndexableRegs.empty() &&
+        m_PatchConstantIndexableRegs.empty()) {
+      run_cleanup = false;
+    }
+  }
 
-  if (m_bRunDxilCleanup) {
+  if (run_cleanup) {
+    // Verify that CFG is reducible before cleanup pass.
+    IFTBOOL(IsReducible(*m_pModule, IrreducibilityAction::ThrowException), DXC_E_IRREDUCIBLE_CFG);
     PassManager.add(createDxilCleanupPass());
     PassManager.run(*m_pModule);
   }
@@ -7374,5 +7434,3 @@ HRESULT CreateDxbcConverter(_In_ REFIID riid, _Out_ LPVOID *ppv) {
   }
   CATCH_CPP_RETURN_HRESULT();
 }
-
-

@@ -34,8 +34,52 @@ if [ -d "$LOCAL_DX_HEADERS" ]; then
     echo -e "${GREEN}Using local DirectX headers from $LOCAL_DX_HEADERS${NC}"
 fi
 
+LTO_ARGS=""
+if [ -n "$DXILCONV_LTO" ]; then
+    LTO_ARGS="-DLLVM_ENABLE_LTO=$DXILCONV_LTO"
+    echo -e "${GREEN}Using LTO mode: $DXILCONV_LTO${NC}"
+fi
+
+C_FLAGS=""
+CXX_FLAGS="-stdlib=libc++ -Wno-deprecated-declarations -Wno-deprecated"
+if [ -n "$DXILCONV_MCPU" ]; then
+    C_FLAGS="$C_FLAGS -mcpu=$DXILCONV_MCPU"
+    CXX_FLAGS="$CXX_FLAGS -mcpu=$DXILCONV_MCPU"
+    echo -e "${GREEN}Using -mcpu=$DXILCONV_MCPU${NC}"
+fi
+
+if [ -n "$DXILCONV_LTO" ]; then
+    if [ "$DXILCONV_LTO" = "Thin" ] || [ "$DXILCONV_LTO" = "thin" ]; then
+        C_FLAGS="$C_FLAGS -flto=thin"
+        CXX_FLAGS="$CXX_FLAGS -flto=thin"
+    else
+        C_FLAGS="$C_FLAGS -flto"
+        CXX_FLAGS="$CXX_FLAGS -flto"
+    fi
+fi
+
+if [ -n "$DXILCONV_PGO" ]; then
+    if [ "$DXILCONV_PGO" = "gen" ]; then
+        C_FLAGS="$C_FLAGS -fprofile-instr-generate"
+        CXX_FLAGS="$CXX_FLAGS -fprofile-instr-generate"
+        echo -e "${GREEN}Using PGO instrumentation (gen)${NC}"
+    elif [ "$DXILCONV_PGO" = "use" ]; then
+        if [ -z "$DXILCONV_PGO_PROFILE" ]; then
+            echo -e "${RED}DXILCONV_PGO_PROFILE is required when DXILCONV_PGO=use${NC}"
+            exit 1
+        fi
+        C_FLAGS="$C_FLAGS -fprofile-instr-use=$DXILCONV_PGO_PROFILE"
+        CXX_FLAGS="$CXX_FLAGS -fprofile-instr-use=$DXILCONV_PGO_PROFILE"
+        echo -e "${GREEN}Using PGO profile: $DXILCONV_PGO_PROFILE${NC}"
+    else
+        echo -e "${RED}Unknown DXILCONV_PGO value: $DXILCONV_PGO (use 'gen' or 'use')${NC}"
+        exit 1
+    fi
+fi
+
 cmake .. \
     $DX_ARGS \
+    $LTO_ARGS \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
@@ -70,7 +114,8 @@ cmake .. \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_CXX_STANDARD_REQUIRED=ON \
     -DCMAKE_CXX_EXTENSIONS=OFF \
-    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -Wno-deprecated-declarations -Wno-deprecated" \
+    -DCMAKE_C_FLAGS="$C_FLAGS" \
+    -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 

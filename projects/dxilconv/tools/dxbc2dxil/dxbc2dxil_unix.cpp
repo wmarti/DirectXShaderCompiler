@@ -19,6 +19,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Bitcode/ReaderWriter.h"
@@ -53,9 +54,14 @@
 #include "DxbcConverter.h"
 
 #include <fstream>
+#include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 using namespace llvm;
 using std::string;
+using std::vector;
 using std::wstring;
 using std::unique_ptr;
 
@@ -88,9 +94,11 @@ static int _wcsicmp(const wchar_t* s1, const wchar_t* s2) {
 // Platform-specific library names
 static const char* GetDxCompilerLibraryName() {
 #ifdef __APPLE__
-    // Try to find library relative to executable location
+    // Try to find library relative to executable location (thread-safe init)
     static char libPath[1024] = {0};
-    if (libPath[0] == 0) {
+    static std::once_flag initOnce;
+    std::call_once(initOnce, []() {
+        strncpy(libPath, "./libdxcompiler.dylib", sizeof(libPath) - 1);
         uint32_t size = sizeof(libPath);
         if (_NSGetExecutablePath(libPath, &size) == 0) {
             // Get the directory containing the executable
@@ -99,18 +107,18 @@ static const char* GetDxCompilerLibraryName() {
                 // Try ../lib/libdxcompiler.dylib first (for build directory structure)
                 strcpy(lastSlash + 1, "../lib/libdxcompiler.dylib");
                 if (access(libPath, F_OK) == 0) {
-                    return libPath;
+                    return;
                 }
                 // Try same directory as executable
                 strcpy(lastSlash + 1, "libdxcompiler.dylib");
                 if (access(libPath, F_OK) == 0) {
-                    return libPath;
+                    return;
                 }
             }
         }
-    }
-    // Fallback to current directory
-    return "./libdxcompiler.dylib";
+        strncpy(libPath, "./libdxcompiler.dylib", sizeof(libPath) - 1);
+    });
+    return libPath;
 #else
     return "./libdxcompiler.so";
 #endif
@@ -118,9 +126,11 @@ static const char* GetDxCompilerLibraryName() {
 
 static const char* GetDxilConvLibraryName() {
 #ifdef __APPLE__
-    // Try to find library relative to executable location
+    // Try to find library relative to executable location (thread-safe init)
     static char libPath[1024] = {0};
-    if (libPath[0] == 0) {
+    static std::once_flag initOnce;
+    std::call_once(initOnce, []() {
+        strncpy(libPath, "./libdxilconv.dylib", sizeof(libPath) - 1);
         uint32_t size = sizeof(libPath);
         if (_NSGetExecutablePath(libPath, &size) == 0) {
             // Get the directory containing the executable
@@ -129,18 +139,18 @@ static const char* GetDxilConvLibraryName() {
                 // Try ../lib/libdxilconv.dylib first (for build directory structure)
                 strcpy(lastSlash + 1, "../lib/libdxilconv.dylib");
                 if (access(libPath, F_OK) == 0) {
-                    return libPath;
+                    return;
                 }
                 // Try same directory as executable
                 strcpy(lastSlash + 1, "libdxilconv.dylib");
                 if (access(libPath, F_OK) == 0) {
-                    return libPath;
+                    return;
                 }
             }
         }
-    }
-    // Fallback to current directory
-    return "./libdxilconv.dylib";
+        strncpy(libPath, "./libdxilconv.dylib", sizeof(libPath) - 1);
+    });
+    return libPath;
 #else
     // Linux: try relative to executable, then current directory
     static char libPath[1024] = {0};
@@ -179,10 +189,15 @@ public:
 protected:
     wstring m_InputFile;
     wstring m_OutputFile;
+    wstring m_BatchDir;
+    wstring m_BatchList;
+    wstring m_OutDir;
+    unsigned m_ThreadCount;
     bool m_bUsage;
     bool m_bDisasmDxbc;
     bool m_bEmitLLVM;
     bool m_bEmitBC;
+    bool m_bBatch;
     wstring m_ExtraOptions;
 
 private:
@@ -203,13 +218,17 @@ private:
 #endif
 
     static bool CheckOption(const wchar_t *pStr, const wchar_t *pOption);
+    void RunBatch();
+    void ConvertFileBatch(const wstring &InputFile, const wstring &OutputFile);
 };
 
 Converter::Converter()
-: m_bUsage(false)
+: m_ThreadCount(0)
+, m_bUsage(false)
 , m_bDisasmDxbc(false)
 , m_bEmitLLVM(false)
 , m_bEmitBC(false)
+, m_bBatch(false)
 , m_pfnDXCompiler_DxcCreateInstance(nullptr)
 , m_pfnDxilConv_DxcCreateInstance(nullptr)
 #ifndef _WIN32
@@ -231,6 +250,18 @@ void Converter::PrintUsage() {
     wprintf(L"   --disasm-dxbc                print DXBC disassembly and exit\n");
     wprintf(L"   --emit-llvm                  print DXIL disassembly and exit\n");
     wprintf(L"   --emit-bc                    emit LLVM bitcode rather than DXIL container\n");
+    wprintf(L"   --no-dxil-cleanup            skip DXIL cleanup pass\n");
+    wprintf(L"   --auto-skip-cleanup          skip cleanup when temp-reg ops are not used\n");
+    wprintf(L"   --fast                       skip cleanup and optional container parts\n");
+    wprintf(L"   --skip-container-parts       omit PSV, signature, root signature, feature info parts\n");
+    wprintf(L"   --skip-psv                   omit pipeline state validation part\n");
+    wprintf(L"   --skip-signatures            omit original input/output signature parts\n");
+    wprintf(L"   --skip-root-signature        omit root signature part\n");
+    wprintf(L"   --skip-feature-info          omit shader feature info part\n");
+    wprintf(L"   --batch <dir>                convert all DXBC binaries in directory\n");
+    wprintf(L"   --batch-list <file>          convert DXBC binaries listed in a file\n");
+    wprintf(L"   --out-dir <dir>              output directory for batch conversion\n");
+    wprintf(L"   --threads <n>                number of worker threads for batch conversion\n");
     wprintf(L"\n");
 }
 
@@ -290,6 +321,71 @@ void Converter::ParseCommandLine(int NumArgs, wchar_t **ppArgs) {
             else if (CheckOption(ppArgs[iArg], L"no-dxil-cleanup")) {
                 m_ExtraOptions += L" -no-dxil-cleanup";
             }
+            else if (CheckOption(ppArgs[iArg], L"auto-skip-cleanup")) {
+                m_ExtraOptions += L" -auto-skip-cleanup";
+            }
+            else if (CheckOption(ppArgs[iArg], L"fast")) {
+                m_ExtraOptions += L" -fast";
+            }
+            else if (CheckOption(ppArgs[iArg], L"skip-container-parts")) {
+                m_ExtraOptions += L" -skip-container-parts";
+            }
+            else if (CheckOption(ppArgs[iArg], L"skip-psv")) {
+                m_ExtraOptions += L" -skip-psv";
+            }
+            else if (CheckOption(ppArgs[iArg], L"skip-signatures")) {
+                m_ExtraOptions += L" -skip-signatures";
+            }
+            else if (CheckOption(ppArgs[iArg], L"skip-root-signature")) {
+                m_ExtraOptions += L" -skip-root-signature";
+            }
+            else if (CheckOption(ppArgs[iArg], L"skip-feature-info")) {
+                m_ExtraOptions += L" -skip-feature-info";
+            }
+            else if (CheckOption(ppArgs[iArg], L"batch")) {
+                iArg++;
+                if (!m_BatchDir.empty() || !m_BatchList.empty())
+                    CmdLineError(L"--batch or --batch-list can be specified only once");
+                if (iArg < NumArgs) {
+                    m_BatchDir = wstring(ppArgs[iArg]);
+                    m_bBatch = true;
+                } else {
+                    CmdLineError(L"--batch requires a directory path");
+                }
+            }
+            else if (CheckOption(ppArgs[iArg], L"batch-list")) {
+                iArg++;
+                if (!m_BatchDir.empty() || !m_BatchList.empty())
+                    CmdLineError(L"--batch or --batch-list can be specified only once");
+                if (iArg < NumArgs) {
+                    m_BatchList = wstring(ppArgs[iArg]);
+                    m_bBatch = true;
+                } else {
+                    CmdLineError(L"--batch-list requires a file path");
+                }
+            }
+            else if (CheckOption(ppArgs[iArg], L"out-dir")) {
+                iArg++;
+                if (!m_OutDir.empty())
+                    CmdLineError(L"--out-dir can be specified only once");
+                if (iArg < NumArgs) {
+                    m_OutDir = wstring(ppArgs[iArg]);
+                } else {
+                    CmdLineError(L"--out-dir requires a directory path");
+                }
+            }
+            else if (CheckOption(ppArgs[iArg], L"threads")) {
+                iArg++;
+                if (iArg < NumArgs) {
+                    wchar_t *endPtr = nullptr;
+                    unsigned long value = wcstoul(ppArgs[iArg], &endPtr, 10);
+                    if (endPtr == ppArgs[iArg] || value == 0)
+                        CmdLineError(L"--threads requires a positive integer");
+                    m_ThreadCount = static_cast<unsigned>(value);
+                } else {
+                    CmdLineError(L"--threads requires a value");
+                }
+            }
             else if (ppArgs[iArg] && ppArgs[iArg][0] == L'-') {
                 CmdLineError(L"unrecognized option: %ls", ppArgs[iArg]);
             }
@@ -304,11 +400,20 @@ void Converter::ParseCommandLine(int NumArgs, wchar_t **ppArgs) {
             iArg++;
         }
 
-        if (!bSeenInputFile) CmdLineError(L"must specify input file name");
-        if (!bSeenOutputFile && !(m_bDisasmDxbc || m_bEmitLLVM))
-            CmdLineError(L"cannot output binary to the console; must specify output file name");
-        if ((m_bDisasmDxbc?1:0) + (m_bEmitLLVM?1:0) + (m_bEmitBC?1:0) > 1)
-            CmdLineError(L"--disasm-dxbc, --emit-llvm and --emit-bc are mutually exclusive");
+        if (m_bBatch) {
+            if (bSeenInputFile)
+                CmdLineError(L"input file name not allowed in batch mode");
+            if (m_OutDir.empty())
+                CmdLineError(L"--out-dir is required in batch mode");
+            if ((m_bDisasmDxbc?1:0) + (m_bEmitLLVM?1:0) + (m_bEmitBC?1:0) > 0)
+                CmdLineError(L"--disasm-dxbc/--emit-llvm/--emit-bc are not supported in batch mode");
+        } else {
+            if (!bSeenInputFile) CmdLineError(L"must specify input file name");
+            if (!bSeenOutputFile && !(m_bDisasmDxbc || m_bEmitLLVM))
+                CmdLineError(L"cannot output binary to the console; must specify output file name");
+            if ((m_bDisasmDxbc?1:0) + (m_bEmitLLVM?1:0) + (m_bEmitBC?1:0) > 1)
+                CmdLineError(L"--disasm-dxbc, --emit-llvm and --emit-bc are mutually exclusive");
+        }
     }
     catch(const wstring &Msg) {
         wprintf(L"%ls: %ls\n", ppArgs[0], Msg.c_str());
@@ -343,6 +448,11 @@ void Converter::Run() {
     // Usage
     if (m_bUsage) {
         PrintUsage();
+        return;
+    }
+
+    if (m_bBatch) {
+        RunBatch();
         return;
     }
 
@@ -445,6 +555,130 @@ void Converter::Run() {
     }
 
     hlsl::WriteBinaryFile(m_OutputFile.c_str(), pOutput, OutputSize);
+}
+
+struct BatchJob {
+    wstring Input;
+    wstring Output;
+};
+
+static bool IsDxbcBinaryPath(const std::string &Path) {
+    StringRef P(Path);
+    if (P.find(".d3d12") == StringRef::npos)
+        return false;
+    return P.endswith(".bin.frag") || P.endswith(".bin.vert");
+}
+
+void Converter::ConvertFileBatch(const wstring &InputFile, const wstring &OutputFile) {
+    CComHeapPtr<void> pDxbcPtr;
+    DWORD DxbcSize;
+    hlsl::ReadBinaryFile(InputFile.c_str(), &pDxbcPtr, &DxbcSize);
+
+    CComPtr<IDxbcConverter> converter;
+    IFT(CreateDxbcConverter(&converter));
+
+    void *pDxilPtr = nullptr;
+    UINT32 DxilSize = 0;
+    IFT(converter->Convert(pDxbcPtr, DxbcSize,
+                           m_ExtraOptions.empty() ? nullptr : m_ExtraOptions.c_str(),
+                           &pDxilPtr, &DxilSize, nullptr));
+    CComHeapPtr<void> pDxil(pDxilPtr);
+    hlsl::WriteBinaryFile(OutputFile.c_str(), pDxil, DxilSize);
+}
+
+void Converter::RunBatch() {
+    vector<BatchJob> Jobs;
+    std::string OutDirUtf8 = WStringToUTF8(m_OutDir);
+    std::error_code ec = llvm::sys::fs::create_directories(OutDirUtf8);
+    if (ec) {
+        CmdLineError(L"failed to create output directory: %ls", m_OutDir.c_str());
+    }
+
+    if (!m_BatchDir.empty()) {
+        std::string BatchDirUtf8 = WStringToUTF8(m_BatchDir);
+        for (llvm::sys::fs::directory_iterator it(BatchDirUtf8, ec), end; it != end && !ec; it.increment(ec)) {
+            std::string Path = it->path();
+            if (!IsDxbcBinaryPath(Path))
+                continue;
+            BatchJob Job;
+            Job.Input = UTF8ToWString(Path);
+            llvm::SmallString<256> OutPath(OutDirUtf8);
+            llvm::sys::path::append(OutPath, llvm::sys::path::filename(Path));
+            OutPath += ".dxil";
+            Job.Output = UTF8ToWString(OutPath.str().str());
+            Jobs.emplace_back(std::move(Job));
+        }
+        if (ec) {
+            CmdLineError(L"failed to enumerate batch directory: %ls", m_BatchDir.c_str());
+        }
+    } else if (!m_BatchList.empty()) {
+        std::ifstream listFile(WStringToUTF8(m_BatchList));
+        if (!listFile)
+            CmdLineError(L"failed to open batch list: %ls", m_BatchList.c_str());
+        std::string line;
+        while (std::getline(listFile, line)) {
+            StringRef ref(line);
+            ref = ref.trim();
+            if (ref.empty() || ref.startswith("#"))
+                continue;
+            std::string Path = ref.str();
+            if (!IsDxbcBinaryPath(Path))
+                continue;
+            BatchJob Job;
+            Job.Input = UTF8ToWString(Path);
+            llvm::SmallString<256> OutPath(OutDirUtf8);
+            llvm::sys::path::append(OutPath, llvm::sys::path::filename(Path));
+            OutPath += ".dxil";
+            Job.Output = UTF8ToWString(OutPath.str().str());
+            Jobs.emplace_back(std::move(Job));
+        }
+    }
+
+    if (Jobs.empty()) {
+        CmdLineError(L"no DXBC binaries found for batch conversion");
+    }
+
+    std::sort(Jobs.begin(), Jobs.end(), [](const BatchJob &A, const BatchJob &B) {
+        return A.Input < B.Input;
+    });
+
+    unsigned ThreadCount = m_ThreadCount;
+    if (ThreadCount == 0) {
+        ThreadCount = std::max(1u, static_cast<unsigned>(std::thread::hardware_concurrency()));
+    }
+    ThreadCount = std::min<unsigned>(ThreadCount, static_cast<unsigned>(Jobs.size()));
+
+    std::atomic<size_t> NextIndex(0);
+    std::atomic<size_t> Failures(0);
+    std::mutex LogMutex;
+    vector<std::thread> Workers;
+    Workers.reserve(ThreadCount);
+
+    for (unsigned t = 0; t < ThreadCount; ++t) {
+        Workers.emplace_back([&]() {
+            Converter Worker;
+            Worker.m_ExtraOptions = m_ExtraOptions;
+            for (;;) {
+                size_t idx = NextIndex.fetch_add(1);
+                if (idx >= Jobs.size())
+                    break;
+                try {
+                    Worker.ConvertFileBatch(Jobs[idx].Input, Jobs[idx].Output);
+                } catch (...) {
+                    Failures.fetch_add(1);
+                    std::lock_guard<std::mutex> lock(LogMutex);
+                    fwprintf(stderr, L"batch convert failed: %ls\n", Jobs[idx].Input.c_str());
+                }
+            }
+        });
+    }
+
+    for (auto &Thread : Workers)
+        Thread.join();
+
+    if (Failures.load() > 0) {
+        fwprintf(stderr, L"batch conversion completed with %zu failures\n", Failures.load());
+    }
 }
 
 HRESULT Converter::CreateDxcLibrary(_Outptr_ IDxcLibrary **ppLibrary) {
