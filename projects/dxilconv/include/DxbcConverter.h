@@ -13,8 +13,11 @@
 #define __DXBC_CONVERTER__H__
 
 // Include basic types and SAL annotations
+#ifndef _WIN32
+// WinAdapter.h provides Windows types for non-Windows platforms
 #include "dxc/Support/WinAdapter.h"
 #include "dxc/Support/WinIncludes.h"
+#endif
 #include "dxc/dxcapi.h"
 
 // Additional SAL annotations if not defined
